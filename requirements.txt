@@ -1,0 +1,18 @@
+# Aplicación Streamlit - Generador de Mapas SVG
+# Archivo de requerimientos para instalación de dependencias
+
+# Framework web principal
+streamlit>=1.28.0
+
+# Manipulación de datos
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Procesamiento de archivos Excel
+openpyxl>=3.1.0
+
+# Utilidades adicionales para manejo de archivos
+xlrd>=2.0.0  # Para soporte de archivos .xls antiguos
+
+# Componentes adicionales de Streamlit (opcional)
+streamlit-components-v1>=0.0.1
