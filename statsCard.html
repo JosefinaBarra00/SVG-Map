@@ -1,0 +1,373 @@
+<script>
+  function actualizarDashboardCards(forzarActualizacion) {
+    if (window.evitarActualizacionStats && !forzarActualizacion) {
+      console.log("Actualización de stats evitada durante cambio de mapa");
+      return;
+    }
+
+    // Verificar que tenemos los datos de productos desde el archivo subido
+    if (
+      !window.datosProductos ||
+      Object.keys(window.datosProductos).length === 0
+    ) {
+      console.log(
+        "No hay datos de productos disponibles para actualizar los cards"
+      );
+      // Mostrar indicadores de carga en todos los cards
+      document
+        .querySelectorAll(".card .chart-container, .card .card-content")
+        .forEach((container) => {
+          container.style.display = "none";
+        });
+      document.querySelectorAll(".card .card-loading").forEach((loader) => {
+        loader.style.display = "flex";
+      });
+
+      return;
+    }
+
+    // Ocultar todos los indicadores de carga
+    document.querySelectorAll(".card .card-loading").forEach((loader) => {
+      loader.style.display = "none";
+    });
+    document
+      .querySelectorAll(".card .chart-container, .card .card-content")
+      .forEach((container) => {
+        container.style.display = "block";
+      });
+
+    try {
+      // Inicializar variables para conteo
+      let totalUtilizado = 0;
+      let totalCapacidad = 0;
+
+      // Contar ubicaciones con error
+      let ubicacionesConError = 0;
+
+      // Ubicaciones con menos de 10 pallets
+      const stockThresholdInput = document.getElementById("stockThreshold");
+
+      if (stockThresholdInput && !stockThresholdInput.hasEventListener) {
+        stockThresholdInput.hasEventListener = true;
+        stockThresholdInput.addEventListener("change", function () {
+          actualizarDashboardCards(true);
+        });
+      }
+
+      const umbralBajoPallet = stockThresholdInput
+        ? parseInt(stockThresholdInput.value) || 10
+        : 10;
+      let ubicacionesConBajoPallet = 0;
+      const ubicacionesConBajoPalletSet = new Set();
+
+      // Productos en retenido
+      let productosRetenido = 0;
+      let productosRetenidoLineas = 0;
+
+      // Mapeo de ubicaciones por área para todas las áreas
+      const ubicacionesPorArea = {};
+
+      // Contar pallets por ubicación para todas las ubicaciones
+      const palletsPorUbicacion = {};
+
+      // Procesar todos los productos para obtener conteo completo
+      Object.entries(window.datosProductos).forEach(([sku, producto]) => {
+        if (producto.ubicaciones && Array.isArray(producto.ubicaciones)) {
+          producto.ubicaciones.forEach((ubicacion) => {
+            const ubicacionId = ubicacion.ubicacion;
+            const cantidad = ubicacion.cantidad || 0;
+
+            // Acumular pallets por ubicación
+            if (!palletsPorUbicacion[ubicacionId]) {
+              palletsPorUbicacion[ubicacionId] = 0;
+            }
+            palletsPorUbicacion[ubicacionId] += cantidad;
+
+            // Verificar si es área de retenido
+            if (
+              ubicacionId.toUpperCase() === "RETENIDO" ||
+              (/\bRETENIDO\b/.test(ubicacionId.toUpperCase()) &&
+                !ubicacionId.toUpperCase().includes("RETENIDO LINEAS"))
+            ) {
+              productosRetenido += cantidad;
+            }
+
+            // Para RETENIDO LINEAS
+            if (ubicacionId.toUpperCase().includes("RETENIDO LINEAS")) {
+              productosRetenidoLineas += cantidad;
+            }
+
+            // Obtener área de la ubicación desde el mapa
+            let area = "";
+            const elementoUbicacion = document.querySelector(
+              `g[data-ubicacion="${ubicacionId}"]`
+            );
+            if (elementoUbicacion) {
+              area = elementoUbicacion.getAttribute("data-area") || "";
+            }
+
+            // Si tenemos datosUbicaciones, usarlo como respaldo
+            if ((!area || area === "") && datosUbicaciones) {
+              const tipoMapa =
+                document.getElementById("tipoMapaSelector")?.value ||
+                "ocupacion";
+              const datosMapa = datosUbicaciones[tipoMapa] || {};
+              if (datosMapa[ubicacionId]) {
+                area = datosMapa[ubicacionId].area || "";
+              }
+            }
+
+            // Registrar ubicación en su área
+            if (area !== "") {
+              if (!ubicacionesPorArea[area]) {
+                ubicacionesPorArea[area] = [];
+              }
+              // Evitar duplicados (mismo ubicacionId en el mismo área)
+              if (!ubicacionesPorArea[area].some((u) => u.id === ubicacionId)) {
+                ubicacionesPorArea[area].push({
+                  id: ubicacionId,
+                  utilizado: 0, // Se actualizará después
+                  capacidad_maxima: 0, // Se actualizará después
+                });
+              }
+            }
+          });
+        }
+      });
+
+      // Obtener capacidad máxima de ubicaciones desde datosUbicaciones si está disponible
+      if (datosUbicaciones) {
+        const tipoMapa =
+          document.getElementById("tipoMapaSelector")?.value || "ocupacion";
+        const datosMapa = datosUbicaciones[tipoMapa] || {};
+
+        Object.entries(datosMapa).forEach(([id, dato]) => {
+          // Si encontramos información de capacidad, actualizar en nuestro registro
+          for (const area in ubicacionesPorArea) {
+            const ubicacion = ubicacionesPorArea[area].find((u) => u.id === id);
+            if (ubicacion) {
+              ubicacion.capacidad_maxima = dato.capacidad_maxima || 0;
+              // También actualizar utilizado con datos reales si está disponible
+              ubicacion.utilizado = dato.utilizado || 0;
+            }
+          }
+        });
+      }
+
+      // Actualizar el conteo de pallets utilizando los datos recopilados
+      for (const area in ubicacionesPorArea) {
+        ubicacionesPorArea[area].forEach((ubicacion) => {
+          // Si no tenemos datos de utilización, usar los pallets contados
+          if (ubicacion.utilizado === 0 && palletsPorUbicacion[ubicacion.id]) {
+            ubicacion.utilizado = palletsPorUbicacion[ubicacion.id];
+          }
+        });
+      }
+
+      // Ahora procesar solo las áreas consideradas para las estadísticas
+      AREAS_CONSIDERADAS.forEach((area) => {
+        if (ubicacionesPorArea[area]) {
+          ubicacionesPorArea[area].forEach((ubicacion) => {
+            totalUtilizado += ubicacion.utilizado;
+            totalCapacidad += ubicacion.capacidad_maxima;
+
+            // Detectar ubicaciones con error (más utilizadas que su capacidad)
+            if (
+              ubicacion.capacidad_maxima > 0 &&
+              ubicacion.utilizado > ubicacion.capacidad_maxima
+            ) {
+              ubicacionesConError++;
+            }
+
+            // Contar ubicaciones con menos de 10 pallets que no sean rack
+            const pasillo = ubicacion.id.slice(0, 3);
+            if (
+              !PASILLO_RACK.includes(pasillo) &&
+              ubicacion.utilizado > 0 &&
+              ubicacion.utilizado < umbralBajoPallet
+            ) {
+              console.log(ubicacion.id);
+              ubicacionesConBajoPalletSet.add(ubicacion.id);
+            }
+          });
+        }
+      });
+
+      // Contar las ubicaciones con menos de 10 pallets
+      ubicacionesConBajoPallet = ubicacionesConBajoPalletSet.size;
+
+      // Calcular porcentaje de utilización
+      const porcentajeUtilizacion =
+        totalCapacidad > 0
+          ? ((totalUtilizado / totalCapacidad) * 100).toFixed(1)
+          : 0;
+
+      // Actualizar valores en los cards con verificaciones
+      const utilizacionElement = document.querySelector(
+        ".card:nth-child(1) .card-value"
+      );
+      const erroresElement = document.querySelector(
+        ".card:nth-child(2) .card-value"
+      );
+      const bajoPalletElement = document.querySelector(
+        ".card:nth-child(3) .card-value"
+      );
+      const cuartaCard = document.querySelector(".card:nth-child(4)");
+      const retenidoElements = cuartaCard
+        ? cuartaCard.querySelectorAll(".card-value")
+        : [];
+
+      if (utilizacionElement)
+        utilizacionElement.textContent = `${porcentajeUtilizacion}%`;
+      if (erroresElement) erroresElement.textContent = ubicacionesConError;
+      if (bajoPalletElement)
+        bajoPalletElement.textContent = ubicacionesConBajoPallet;
+      if (retenidoElements && retenidoElements.length >= 2) {
+        retenidoElements[0].textContent = productosRetenido;
+        retenidoElements[1].textContent = productosRetenidoLineas;
+      }
+
+      // Actualizar también la descripción para que indique que son áreas filtradas
+      const utilizacionLabel = document.querySelector(
+        ".card:nth-child(1) .card-label"
+      );
+      if (utilizacionLabel) {
+        utilizacionLabel.textContent = `(Solo áreas: ${AREAS_CONSIDERADAS.join(
+          ", "
+        )})`;
+      }
+
+      // Cambiar el texto del label para el card de bajo pallet
+      const bajoPalletLabel = document.querySelector(
+        ".card:nth-child(3) .card-label"
+      );
+      if (bajoPalletLabel) {
+        bajoPalletLabel.textContent = "Ubicaciones con < 10 pallets";
+      }
+
+      // Crear gráfico de utilización si existe Chart.js
+      if (typeof Chart !== "undefined") {
+        crearGraficoUtilizacion(porcentajeUtilizacion);
+      }
+
+      console.log(
+        `Dashboard actualizado: ${porcentajeUtilizacion}% utilización en áreas consideradas`
+      );
+    } catch (error) {
+      console.error("Error al actualizar dashboard cards:", error);
+    }
+  }
+
+  function crearGraficoUtilizacion(porcentaje) {
+    const ctx = document.getElementById("utilizacionChart");
+    if (!ctx) {
+      console.warn("Elemento del gráfico no encontrado");
+      return;
+    }
+
+    try {
+      // Verificar si el gráfico es una instancia válida de Chart antes de intentar destruirlo
+      if (window.utilizacionChart instanceof Chart) {
+        window.utilizacionChart.destroy();
+      } else if (window.utilizacionChart) {
+        // Si existe pero no es una instancia de Chart, simplemente resetéalo
+        window.utilizacionChart = null;
+      }
+
+      // Determinar el color según el porcentaje
+      let color = "#00FF00"; // Verde para bajo uso
+      if (porcentaje > 75) {
+        color = "#FF0000"; // Rojo para alto uso
+      } else if (porcentaje > 50) {
+        color = "#FF7700"; // Naranja para uso medio
+      } else if (porcentaje > 25) {
+        color = "#FFFF00"; // Amarillo para uso bajo-medio
+      }
+
+      // Asegúrate de que Chart está disponible antes de crear un nuevo gráfico
+      if (typeof Chart === "undefined") {
+        console.warn("Chart.js no está disponible");
+        return;
+      }
+
+      // Crear un nuevo gráfico con plugin para mostrar texto en el centro
+      window.utilizacionChart = new Chart(ctx, {
+        type: "doughnut",
+        data: {
+          labels: ["Utilizado", "Libre"],
+          datasets: [
+            {
+              data: [porcentaje, 100 - porcentaje],
+              backgroundColor: [color, "#e0e0e0"],
+              borderWidth: 0,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: "70%",
+          plugins: {
+            legend: {
+              display: false,
+            },
+            tooltip: {
+              enabled: false,
+            },
+            // Añadir este plugin personalizado para mostrar el texto en el centro
+            doughnutCenterText: {
+              text: `${porcentaje}%`,
+              color: "#333333",
+              fontStyle: "bold",
+              sidePadding: 20,
+            },
+          },
+        },
+        plugins: [
+          {
+            id: "doughnutCenterText",
+            beforeDraw: function (chart) {
+              if (chart.config.options.plugins.doughnutCenterText) {
+                // Obtener config
+                var config = chart.config.options.plugins.doughnutCenterText;
+
+                // Obtener el contexto de dibujo y calcular posición central
+                var ctx = chart.ctx;
+                var centerX =
+                  chart.chartArea.left +
+                  (chart.chartArea.right - chart.chartArea.left) / 2;
+                var centerY =
+                  chart.chartArea.top +
+                  (chart.chartArea.bottom - chart.chartArea.top) / 2;
+
+                // Guardar estado del contexto
+                ctx.save();
+
+                // Configurar el texto
+                var fontSize =
+                  (chart.chartArea.right - chart.chartArea.left) / 12; // Ajustar tamaño basado en ancho
+                if (fontSize < 20) fontSize = 20; // Mínimo tamaño
+                if (fontSize > 35) fontSize = 35; // Máximo tamaño
+
+                ctx.font = fontSize + "px Arial, sans-serif";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillStyle = config.color || "#333333";
+
+                // Dibujar el texto
+                ctx.fillText(config.text, centerX, centerY);
+
+                // Restaurar el contexto
+                ctx.restore();
+              }
+            },
+          },
+        ],
+      });
+    } catch (error) {
+      console.error("Error al crear gráfico de utilización:", error);
+      // En caso de error, asegurarse de que no quede un gráfico parcialmente inicializado
+      window.utilizacionChart = null;
+    }
+  }
+</script>

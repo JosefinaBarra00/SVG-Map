@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><?= TITULO ?></title>
+    <?!= include('style'); ?>
+    <link
+      href="https://cdnjs.cloudflare.com/ajax/libs/fullcalendar/5.10.1/main.min.css"
+      rel="stylesheet"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+  </head>
+
+  <body>
+    <div class="container">
+      <!-- Encabezado de la página -->
+      <header>
+        <div class="header-controls">
+          <button id="uploadButton" class="btn-upload">Cargar Archivo</button>
+
+          <select id="tipoMapaSelector" class="selector-mapa">
+            <option value="ocupacion">Ver Ocupación</option>
+            <option value="vencimiento">Ver Vencimientos</option>
+          </select>
+        </div>
+      </header>
+
+      <!-- Dashboard Cards -->
+      <div class="dashboard-header">
+        <div class="company-logo">
+          <img
+            src="https://upload.wikimedia.org/wikipedia/commons/1/19/CCU_LOGO.png"
+            alt="Logo CCU"
+          />
+        </div>
+        <div class="dashboard-cards">
+          <!-- Card utilizacion -->
+          <div class="card" id="card-utilizacion">
+            <h3>% Utilizado</h3>
+            <div class="chart-container">
+              <canvas id="utilizacionChart"></canvas>
+            </div>
+            <div class="card-loading" style="display: flex">
+              <div class="card-loader"></div>
+              <span>Cargando...</span>
+            </div>
+          </div>
+
+          <!-- Card ubicaciones con error -->
+          <div class="card" id="card-errores">
+            <h3>Ubicaciones con Error</h3>
+            <div class="card-content">
+              <span class="card-value"></span>
+              <span class="card-label">Ubicaciones</span>
+            </div>
+            <div class="card-loading" style="display: flex">
+              <div class="card-loader"></div>
+              <span>Cargando...</span>
+            </div>
+          </div>
+
+          <!-- Card SKUs con bajo stock  -->
+          <div class="card">
+            <h3>
+              Ubicaciones con menos de
+              <input
+                type="number"
+                id="stockThreshold"
+                min="1"
+                max="100"
+                value="10"
+              />
+              pallet
+            </h3>
+            <div class="card-content">
+              <span class="card-value"></span>
+            </div>
+            <div class="card-loading" style="display: flex">
+              <div class="card-loader"></div>
+              <span>Cargando...</span>
+            </div>
+          </div>
+
+          <!-- Card productos retenidos -->
+          <div class="card">
+            <h3>Pallets retenidos</h3>
+            <div class="card-content">
+              <span class="card-value"></span>
+              <span class="card-label">Logístico</span>
+              <br />
+              <span class="card-value"></span>
+              <span class="card-label">Líneas</span>
+            </div>
+            <div class="card-loading" style="display: flex">
+              <div class="card-loader"></div>
+              <span>Cargando...</span>
+            </div>
+          </div>
+
+          <!-- Card Datos historicos -->
+          <div class="card">
+            <h3>Datos Históricos</h3>
+            <div class="card-content">
+              <button id="btnHistoricos" class="btn-historicos">
+                Ver históricos
+              </button>
+            </div>
+            <div class="card-loading" style="display: flex">
+              <div class="card-loader"></div>
+              <span>Cargando...</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Filtros Horizontales -->
+      <div class="filtros-container">
+        <div class="filtro-grupo">
+          <div class="filtro-item">
+            <label for="filtro-sku">SKU</label>
+            <input type="text" id="filtro-sku" placeholder="Filtrar por SKU" />
+          </div>
+
+          <div class="filtro-item">
+            <label for="filtro-area">Áreas</label>
+            <div class="dropdown-container">
+              <button class="dropdown-btn" id="btn-areas">
+                Seleccionar áreas
+              </button>
+              <div class="dropdown-content" id="filtro-area-container">
+                <!-- Las checkboxes se añadirán dinámicamente -->
+                <div class="checkbox-item all-checkbox">
+                  <input type="checkbox" id="area-all" value="todas" />
+                  <label for="area-all">(Seleccionar todo)</label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="filtro-item">
+            <label for="filtro-ubicacion">Ubicación</label>
+            <input
+              type="text"
+              id="filtro-ubicacion"
+              placeholder="Filtrar por ubicación"
+            />
+          </div>
+
+          <div class="filtro-item">
+            <label for="filtro-producto">Producto</label>
+            <input
+              type="text"
+              id="filtro-producto"
+              placeholder="Filtrar por producto"
+            />
+          </div>
+
+          <div class="filtro-item">
+            <label for="filtro-lpn">LPN</label>
+            <input type="text" id="filtro-lpn" placeholder="Filtrar por LPN" />
+          </div>
+        </div>
+
+        <div class="filtro-botones">
+          <button id="btn-filtrar">Filtrar</button>
+          <button id="btn-limpiar">Limpiar</button>
+        </div>
+      </div>
+
+      <!-- Vista del mapa (activa por defecto) -->
+      <div id="vista-mapa" class="vista-contenido active">
+        <div id="resultado-filtro"></div>
+
+        <div class="dashboard-container">
+          <div class="map-container">
+            <div id="svg-ocupacion" class="svg-container">
+              <div id="loading-svg-ocupacion" class="svg-loading">
+                <div class="loader-spinner"></div>
+                <p>Cargando mapa...</p>
+              </div>
+              <?!= SVG_OCUPACION ?>
+            </div>
+
+            <div
+              id="svg-vencimiento"
+              class="svg-container"
+              style="display: none"
+            >
+              <div id="loading-svg-vencimiento" class="svg-loading">
+                <div class="loader-spinner"></div>
+                <p>Cargando mapa...</p>
+              </div>
+              <?!= SVG_VENCIMIENTO ?>
+            </div>
+          </div>
+
+          <div class="side-leyend">
+            <div class="leyenda-vertical" id="leyenda-ocupacion">
+              <h3>Ocupación</h3>
+              <div class="item-leyenda">
+                <!-- Verde -->
+                <div
+                  class="color-muestra"
+                  style="background-color: #00ff00"
+                ></div>
+                <span>0-25%</span>
+              </div>
+              <div class="item-leyenda">
+                <!-- Amarillo -->
+                <div
+                  class="color-muestra"
+                  style="background-color: #ffff00"
+                ></div>
+                <span>25-50%</span>
+              </div>
+              <div class="item-leyenda">
+                <!-- Naranjo -->
+                <div
+                  class="color-muestra"
+                  style="background-color: #ff8800"
+                ></div>
+                <span>50-75%</span>
+              </div>
+              <div class="item-leyenda">
+                <!-- Rojo -->
+                <div
+                  class="color-muestra"
+                  style="background-color: #ff0000"
+                ></div>
+                <span>75-100%</span>
+              </div>
+              <div class="item-leyenda">
+                <div
+                  class="color-muestra"
+                  style="background-color: #cccccc"
+                ></div>
+                <span>Sin datos</span>
+              </div>
+            </div>
+
+            <div
+              class="leyenda-vertical"
+              id="leyenda-vencimiento"
+              style="display: none"
+            >
+              <h3>Vida Útil</h3>
+              <div class="item-leyenda">
+                <div
+                  class="color-muestra"
+                  style="background-color: #00ff00"
+                ></div>
+                <span>75-100%</span>
+              </div>
+              <div class="item-leyenda">
+                <div
+                  class="color-muestra"
+                  style="background-color: #ffff00"
+                ></div>
+                <span>50-75%</span>
+              </div>
+              <div class="item-leyenda">
+                <!-- Naranjo -->
+                <div
+                  class="color-muestra"
+                  style="background-color: #ff8800"
+                ></div>
+                <span>25-50%</span>
+              </div>
+              <div class="item-leyenda">
+                <div
+                  class="color-muestra"
+                  style="background-color: #ff0000"
+                ></div>
+                <span>0-25%</span>
+              </div>
+              <div class="item-leyenda">
+                <div class="color-muestra multiple-vidas">
+                  <div
+                    style="
+                      position: absolute;
+                      left: 0;
+                      top: 0;
+                      width: 50%;
+                      height: 100%;
+                      background: radial-gradient(
+                        circle,
+                        #ffff00 0%,
+                        #ff7700 100%
+                      );
+                    "
+                  ></div>
+                </div>
+                <span>Múltiples vidas útiles</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Contenedor para tabla y calendario (lado a lado) -->
+        <div class="bottom-panels">
+          <div class="data-section vencimientos-section">
+            <!-- <h3 class="data-header">Productos próximos a vencer</h3> -->
+            <div class="data-content">
+              <table class="dashboard-table" id="tabla-vencimientos">
+                <thead>
+                  <tr>
+                    <th id="ordenar-sku" class="btn-ordenar">SKU</th>
+                    <th id="ordenar-descripcion" class="btn-ordenar">
+                      Descripción
+                    </th>
+                    <th id="ordenar-cantidad" class="btn-ordenar">Pallets</th>
+                    <th id="ordenar-fecha" class="btn-ordenar">
+                      Fecha de Vencimiento
+                    </th>
+                    <th id="ordenar-cajas" class="btn-ordenar">Cajas</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <!-- Se llenará dinámicamente con JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="data-section calendario-section">
+            <!-- <h3 class="data-header">Calendario de Vencimientos</h3> -->
+            <div id="calendar"></div>
+          </div>
+        </div>
+        <div class="footer">&copy; Sistema de mapeo de bodega</div>
+      </div>
+
+      <!-- Vista del calendario -->
+      <div id="vista-calendario" class="vista-contenido" style="display: none">
+        <div class="calendario-container">
+          <div id="calendar"></div>
+        </div>
+
+        <div
+          id="carga-calendario"
+          style="display: none; text-align: center; padding: 20px"
+        >
+          <div
+            style="
+              display: inline-block;
+              border: 4px solid #f3f3f3;
+              border-top: 4px solid #3498db;
+              border-radius: 50%;
+              width: 30px;
+              height: 30px;
+              animation: spin 2s linear infinite;
+            "
+          ></div>
+          <p>Cargando datos de vencimientos...</p>
+          <style>
+            @keyframes spin {
+              0% {
+                transform: rotate(0deg);
+              }
+
+              100% {
+                transform: rotate(360deg);
+              }
+            }
+          </style>
+        </div>
+
+        <div
+          id="error-calendario"
+          style="
+            display: none;
+            text-align: center;
+            padding: 20px;
+            color: #f44336;
+          "
+        >
+          <p>
+            No se pudieron cargar los datos de vencimientos. Por favor, intente
+            nuevamente más tarde.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tooltips y modales -->
+    <div id="tooltip" class="tooltip"></div>
+
+    <!-- Modal de detalle de ubicación -->
+    <div id="ubicacion-modal" class="ubicacion-modal">
+      <div class="ubicacion-modal-content">
+        <span class="close-modal" id="close-modal">&times;</span>
+        <div id="ubicacion-detalle"></div>
+      </div>
+    </div>
+
+    <!-- Modal de detalle de vencimientos -->
+    <div id="vencimiento-modal" class="ubicacion-modal">
+      <div class="ubicacion-modal-content">
+        <span class="close-modal" id="close-vencimiento-modal">&times;</span>
+        <div id="vencimiento-detalle"></div>
+      </div>
+    </div>
+
+    <!-- Panel deslizable para carga de archivos -->
+    <div class="slide-panel" id="uploadPanel">
+      <span class="close-panel" id="closeUploadPanel">&times;</span>
+      <h2 class="title-slide-panel">Cargar archivo de inventario</h2>
+      <select id="fuenteDatosSelector" class="selector-fuente">
+        <option value="blueyonder">BlueYonder</option>
+        <option value="wep">WEP</option>
+      </select>
+
+      <div class="upload-area" id="uploadArea">
+        <p>Arrastre su archivo Excel aquí o</p>
+        <input
+          type="file"
+          id="fileInput"
+          accept=".xlsx, .xls"
+          style="display: none"
+        />
+        <button id="selectButton" class="btn btn-primary">
+          Seleccionar archivo
+        </button>
+        <button id="selectDriveButton" class="btn btn-primary">
+          Seleccionar de Drive
+        </button>
+        <div id="fileInfo" class="file-info"></div>
+      </div>
+
+      <div
+        class="file-date-selector"
+        id="fileDateSelector"
+        style="display: none; margin-top: 15px"
+      >
+        <div class="file-date-header">Seleccione la fecha del archivo:</div>
+        <div class="date-inputs">
+          <div class="input-group">
+            <label for="fileDate">Fecha:</label>
+            <input type="date" id="fileDate" class="fecha-input" />
+          </div>
+          <div class="input-group">
+            <label for="fileTime">Hora:</label>
+            <input type="time" id="fileTime" class="hora-input" value="00:00" />
+          </div>
+        </div>
+        <div class="input-hint">
+          Si no selecciona fecha, se usará la fecha actual.
+        </div>
+      </div>
+
+      <div
+        class="progress-container"
+        id="progressContainer"
+        style="display: none"
+      >
+        <div class="progress-bar" id="progressBar"></div>
+      </div>
+
+      <div class="button-group">
+        <button id="processFileButton" class="btn btn-primary" disabled>
+          Procesar archivo
+        </button>
+        <button
+          id="cancelProcessButton"
+          class="btn btn-primary"
+          style="display: none"
+        >
+          Cancelar
+        </button>
+      </div>
+
+      <div id="uploadResult" style="margin-top: 20px"></div>
+    </div>
+
+    <!-- Overlay para cerrar paneles -->
+    <div class="panel-overlay" id="panelOverlay"></div>
+
+    <!--   Scripts de datos -->
+    <?!= include('scripts'); ?>
+    <?!= include('scriptCalendario'); ?>
+    <?!= include('scriptsSlidePanel'); ?>
+    <?!= include('autocompletar'); ?>
+    <?!= include('statsCards'); ?>
+    <?!= include('zoomControls'); ?>
+
+    <script>
+      const AREAS_CONSIDERADAS = <?!= JSON.stringify(AREAS_CONSIDERADAS) ?>;
+      const PASILLO_RACK = <?!= JSON.stringify(PASILLO_RACK) ?>;
+    </script>
+
+    <script id="datos-productos" type="application/json">
+      <?!= mapaSKU ?>
+    </script>
+
+    <!-- Scripts principales -->
+    <script>
+      let datosProductos = null;
+
+      // Código de inicialización
+      document.addEventListener("DOMContentLoaded", function () {
+        console.log("DOM cargado completamente");
+        setupNavigation();
+
+        // Inicializar modal
+        const modal = document.getElementById("ubicacion-modal");
+        const closeModal = document.getElementById("close-modal");
+        const detalleContainer = document.getElementById("ubicacion-detalle");
+
+        // Cerrar modal al hacer clic en X
+        closeModal.addEventListener("click", function () {
+          modal.style.display = "none";
+        });
+
+        // Cerrar modal al hacer clic fuera del contenido
+        window.addEventListener("click", function (event) {
+          if (event.target === modal) {
+            modal.style.display = "none";
+          }
+        });
+
+        // FUNCIONALIDAD DE TOOLTIPS
+        const tooltip = document.getElementById("tooltip");
+        const svgElements = document.querySelectorAll("g[id][data-ubicacion]");
+
+        // Añadir listeners para mostrar tooltips y detectar clics
+        svgElements.forEach(function (element) {
+          // También seleccionar los rectángulos dentro de cada grupo
+          const rects = element.querySelectorAll("rect.ubicacion");
+
+          // Añadir los eventos al grupo g
+          element.addEventListener("mousemove", showTooltip);
+          element.addEventListener("mouseout", hideTooltip);
+          element.addEventListener("mouseover", highlightElement);
+          element.addEventListener("mouseout", unhighlightElement);
+          element.addEventListener("click", showUbicacionDetalle);
+
+          // Añadir los mismos eventos a cada rectángulo dentro del grupo
+          rects.forEach(function (rect) {
+            rect.addEventListener("mousemove", showTooltip);
+            rect.addEventListener("mouseout", hideTooltip);
+            rect.addEventListener("mouseover", highlightElement);
+            rect.addEventListener("mouseout", unhighlightElement);
+            rect.addEventListener("click", showUbicacionDetalle);
+          });
+        });
+
+        // FUNCIONALIDAD DE FILTRADO DE PRODUCTOS
+        const btnFiltrar = document.getElementById("btn-filtrar");
+        const btnLimpiar = document.getElementById("btn-limpiar");
+        const inputSku = document.getElementById("filtro-sku");
+        const resultadoFiltro = document.getElementById("resultado-filtro");
+
+        console.log("Elementos del filtro:", {
+          btnFiltrar: !!btnFiltrar,
+          btnLimpiar: !!btnLimpiar,
+          inputSku: !!inputSku,
+        });
+
+        // Asociar eventos a los botones
+        if (btnFiltrar) {
+          btnFiltrar.addEventListener("click", function () {
+            console.log("Botón filtrar clickeado");
+            aplicarTodosFiltros();
+            // filtrarPorSku(inputSku);
+          });
+        }
+
+        if (inputSku) {
+          inputSku.addEventListener("keypress", function (event) {
+            if (event.key === "Enter") {
+              console.log("Enter presionado en el filtro");
+              filtrarPorSku(inputSku);
+            }
+          });
+        }
+
+        if (btnLimpiar) {
+          btnLimpiar.addEventListener("click", function () {
+            console.log("Botón limpiar clickeado");
+            limpiarFiltro(true);
+          });
+        }
+
+        window.setupUploadPanel();
+        const tipoMapaSelector = document.getElementById("tipoMapaSelector");
+        const svgOcupacion = document.getElementById("svg-ocupacion");
+        const svgVencimiento = document.getElementById("svg-vencimiento");
+        const leyendaOcupacion = document.getElementById("leyenda-ocupacion");
+        const leyendaVencimiento = document.getElementById(
+          "leyenda-vencimiento"
+        );
+
+        setTimeout(function () {
+          const svgActual = document
+            .getElementById("svg-ocupacion")
+            .querySelector("svg");
+          if (svgActual) {
+            ajustarSVGViewBox(svgActual);
+            console.log("SVG inicial ajustado automáticamente");
+          }
+        }, 500);
+
+        // Cargar FullCalendar de CDN
+        var scriptCalendar = document.createElement("script");
+        scriptCalendar.src =
+          "https://cdn.jsdelivr.net/npm/fullcalendar@5.10.1/main.min.js";
+        scriptCalendar.onload = function () {
+          var scriptLocale = document.createElement("script");
+          scriptLocale.src =
+            "https://cdn.jsdelivr.net/npm/fullcalendar@5.10.1/locales/es.min.js";
+          scriptLocale.onload = function () {
+            if (
+              document.getElementById("vista-calendario").style.display !==
+              "none"
+            ) {
+              inicializarCalendario();
+            }
+          };
+          document.head.appendChild(scriptLocale);
+        };
+        document.head.appendChild(scriptCalendar);
+
+        // Cargar CSS de FullCalendar
+        var link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href =
+          "https://cdn.jsdelivr.net/npm/fullcalendar@5.10.1/main.min.css";
+        document.head.appendChild(link);
+      });
+
+      function ajustarSVGViewBox(svgElement) {
+        if (!svgElement) return;
+
+        if (
+          svgElement.hasAttribute("data-scale") &&
+          parseFloat(svgElement.getAttribute("data-scale")) !== 1
+        ) {
+          return;
+        }
+
+        // Obtener todos los elementos g que representan ubicaciones
+        const ubicaciones = svgElement.querySelectorAll(
+          "g[id][data-ubicacion]"
+        );
+
+        if (ubicaciones.length > 0) {
+          // Calcular los límites del contenido real
+          let minX = Infinity,
+            minY = Infinity,
+            maxX = 0,
+            maxY = 0;
+
+          ubicaciones.forEach(function (ubi) {
+            const rect = ubi.querySelector("rect");
+            if (rect) {
+              const x = parseFloat(rect.getAttribute("x") || 0);
+              const y = parseFloat(rect.getAttribute("y") || 0);
+              const width = parseFloat(rect.getAttribute("width") || 0);
+              const height = parseFloat(rect.getAttribute("height") || 0);
+
+              minX = Math.min(minX, x);
+              minY = Math.min(minY, y);
+              maxX = Math.max(maxX, x + width);
+              maxY = Math.max(maxY, y + height);
+            }
+          });
+
+          // Añadir un margen del 1%
+          const margin = 0.01;
+          const width = maxX - minX;
+          const height = maxY - minY;
+          const marginX = width * margin;
+          const marginY = height * margin;
+
+          const viewBox = `${minX - marginX} ${minY - marginY} ${
+            width + marginX * 2
+          } ${height + marginY * 2}`;
+          svgElement.setAttribute("viewBox", viewBox);
+
+          if (!svgElement.hasAttribute("data-original-viewbox")) {
+            svgElement.setAttribute("data-original-viewbox", viewBox);
+          }
+
+          if (!svgElement.hasAttribute("data-scale")) {
+            svgElement.setAttribute("data-scale", "1");
+            svgElement.setAttribute("data-pan-x", "0");
+            svgElement.setAttribute("data-pan-y", "0");
+            svgElement.setAttribute("data-zoomed", "false");
+          }
+
+          const aspectRatio = width / height;
+          const parentContainer = svgElement.parentElement;
+
+          if (parentContainer) {
+            const containerWidth = parentContainer.clientWidth;
+            const containerHeight = parentContainer.clientHeight;
+
+            if (aspectRatio > 1) {
+              // SVG más ancho que alto
+              svgElement.style.width = "100%";
+              svgElement.style.height = "auto";
+            } else {
+              // SVG más alto que ancho
+              svgElement.style.width = "auto";
+              svgElement.style.height = "100%";
+            }
+          }
+
+          console.log("SVG ajustado para mostrar todo el contenido:", viewBox);
+        }
+      }
+
+      function setupNavigation() {
+        const vencimientoModal = document.getElementById("vencimiento-modal");
+        const closeVencimientoModal = document.getElementById(
+          "close-vencimiento-modal"
+        );
+        if (vencimientoModal && closeVencimientoModal) {
+          closeVencimientoModal.addEventListener("click", function () {
+            vencimientoModal.style.display = "none";
+          });
+
+          window.addEventListener("click", function (event) {
+            if (event.target === vencimientoModal) {
+              vencimientoModal.style.display = "none";
+            }
+          });
+        }
+      }
+    </script>
+  </body>
+</html>

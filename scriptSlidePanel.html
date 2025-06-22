@@ -1,0 +1,763 @@
+<script>
+  // Variables globales esenciales para el panel de carga
+  let selectedFile = null;
+  let driveFiles = [];
+
+  const uploadPanel = document.getElementById("uploadPanel");
+  const panelOverlay = document.getElementById("panelOverlay");
+  const uploadButton = document.getElementById("uploadButton");
+  const closeUploadPanelBtn = document.getElementById("closeUploadPanel");
+  const fileInput = document.getElementById("fileInput");
+  const selectButton = document.getElementById("selectButton");
+  const uploadArea = document.getElementById("uploadArea");
+  const fileInfo = document.getElementById("fileInfo");
+  const progressContainer = document.getElementById("progressContainer");
+  const progressBar = document.getElementById("progressBar");
+  const uploadResult = document.getElementById("uploadResult");
+  const processFileButton = document.getElementById("processFileButton");
+
+  const cancelProcessButton = document.createElement("button");
+  cancelProcessButton.id = "cancelProcessButton";
+  cancelProcessButton.className = "btn btn-secondary";
+  cancelProcessButton.textContent = "Cancelar";
+  cancelProcessButton.style.display = "none";
+  cancelProcessButton.addEventListener("click", cancelarProcesamiento);
+
+  // Inicialización para el panel de carga (agregar a tu DOMContentLoaded existente)
+  window.setupUploadPanel = function () {
+    // Event listeners para panel deslizable
+    if (uploadButton) {
+      uploadButton.addEventListener("click", openUploadPanel);
+    }
+
+    if (closeUploadPanelBtn) {
+      closeUploadPanelBtn.addEventListener("click", closeUploadPanel);
+    }
+
+    if (panelOverlay) {
+      panelOverlay.addEventListener("click", closeAllPanels);
+    }
+
+    // Event listeners para carga de archivos
+    if (selectButton && fileInput) {
+      selectButton.addEventListener("click", () => fileInput.click());
+      fileInput.addEventListener("change", handleFileSelect);
+    }
+
+    if (processFileButton) {
+      processFileButton.addEventListener("click", function () {
+        console.log("Botón procesar archivo clickeado");
+        processSelectedFile();
+      });
+    }
+
+    // Soporte para arrastrar y soltar
+    if (uploadArea) {
+      ["dragenter", "dragover", "dragleave", "drop"].forEach((eventName) => {
+        uploadArea.addEventListener(eventName, preventDefaults, false);
+      });
+
+      ["dragenter", "dragover"].forEach((eventName) => {
+        uploadArea.addEventListener(eventName, () => {
+          uploadArea.classList.add("highlight");
+        });
+      });
+
+      ["dragleave", "drop"].forEach((eventName) => {
+        uploadArea.addEventListener(eventName, () => {
+          uploadArea.classList.remove("highlight");
+        });
+      });
+
+      uploadArea.addEventListener("drop", handleFileDrop);
+    }
+
+    // Seleccionar archivo Drive
+    if (document.getElementById("selectDriveButton")) {
+      document
+        .getElementById("selectDriveButton")
+        .addEventListener("click", function () {
+          console.log("Solicitando archivos de Drive");
+          mostrarCargaDrive(true);
+
+          // Solicitar archivos al servidor
+          google.script.run
+            .withSuccessHandler(function (files) {
+              mostrarCargaDrive(false);
+              if (files && Array.isArray(files) && files.length > 0) {
+                driveFiles = files;
+                mostrarSelectorArchivos(files);
+              } else {
+                alert(
+                  "No se encontraron archivos Excel en la carpeta seleccionada"
+                );
+              }
+            })
+            .withFailureHandler(function (error) {
+              mostrarCargaDrive(false);
+              console.error("Error al obtener archivos:", error);
+              alert("Error al obtener los archivos de Drive");
+            })
+            .obtenerArchivosExcel();
+        });
+    }
+  };
+
+  // Funciones para panel deslizable
+  function openUploadPanel() {
+    if (uploadPanel && panelOverlay) {
+      uploadPanel.classList.add("open");
+      panelOverlay.classList.add("open");
+    }
+  }
+
+  function closeUploadPanel() {
+    if (uploadPanel && panelOverlay) {
+      uploadPanel.classList.remove("open");
+      panelOverlay.classList.remove("open");
+    }
+  }
+
+  function closeAllPanels() {
+    if (uploadPanel && panelOverlay) {
+      uploadPanel.classList.remove("open");
+      panelOverlay.classList.remove("open");
+    }
+  }
+
+  // Prevenir comportamiento predeterminado para eventos de arrastrar y soltar
+  function preventDefaults(e) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  // Manejar selección de archivo
+  function handleFileSelect(e) {
+    if (e.target.files.length > 0) {
+      selectedFile = e.target.files[0];
+      displayFileInfo(selectedFile);
+      if (processFileButton) {
+        processFileButton.disabled = false;
+      }
+    }
+  }
+
+  // Manejar archivo soltado en área de carga
+  function handleFileDrop(e) {
+    const dt = e.dataTransfer;
+    const files = dt.files;
+
+    if (files.length > 0) {
+      selectedFile = files[0];
+      displayFileInfo(selectedFile);
+      if (processFileButton) {
+        processFileButton.disabled = false;
+      }
+    }
+  }
+
+  // Mostrar información del archivo seleccionado
+  function displayFileInfo(file) {
+    if (fileInfo) {
+      const sizeInMB = (file.size / 1024 / 1024).toFixed(2);
+      fileInfo.innerHTML = `
+          <div class="file-info-container">
+            <div class="file-details">
+              <strong>${file.name}</strong> (${sizeInMB} MB)
+            </div>
+            <button class="file-remove-btn" id="removeFileBtn">&times;</button>
+          </div>
+        `;
+
+      // Mostrar el selector de fecha
+      const fileDateSelector = document.getElementById("fileDateSelector");
+      if (fileDateSelector) {
+        fileDateSelector.style.display = "block";
+
+        // Establecer fecha por defecto (hoy)
+        const today = new Date();
+        const formattedDate = today.toISOString().split("T")[0]; // formato YYYY-MM-DD
+        const fileDate = document.getElementById("fileDate");
+
+        // Formatear hora actual
+        const currentHour = today.getHours().toString().padStart(2, "0");
+        const currentMinutes = today.getMinutes().toString().padStart(2, "0");
+        const currentTime = `${currentHour}:${currentMinutes}`;
+
+        if (fileDate) {
+          fileDate.value = formattedDate;
+        }
+
+        // Establecer hora actual por defecto
+        const fileTime = document.getElementById("fileTime");
+        if (fileTime) {
+          fileTime.value = currentTime;
+        }
+      }
+
+      // Añadir listener para el botón de eliminar
+      const removeFileBtn = document.getElementById("removeFileBtn");
+      if (removeFileBtn) {
+        removeFileBtn.addEventListener("click", removeSelectedFile);
+      }
+    }
+  }
+
+  function removeSelectedFile() {
+    selectedFile = null;
+    if (fileInfo) {
+      fileInfo.innerHTML = "";
+    }
+
+    if (fileInput) {
+      fileInput.value = ""; // Limpiar el input de archivo
+    }
+
+    const fileDateSelector = document.getElementById("fileDateSelector");
+    if (fileDateSelector) {
+      fileDateSelector.style.display = "none";
+    }
+
+    if (processFileButton) {
+      processFileButton.disabled = true;
+      removeFileBtn.disabled = true;
+    }
+  }
+
+  function cancelarProcesamiento() {
+    if (window.processingCancelled !== undefined) {
+      window.processingCancelled = true;
+      updateProcessStatus("Cancelando procesamiento...");
+      cancelProcessButton.disabled = true;
+    }
+  }
+
+  function processSelectedFile() {
+    if (processFileButton) {
+      processFileButton.disabled = true;
+      if (removeFileBtn) removeFileBtn.disabled = true;
+    }
+
+    window.processingCancelled = false;
+    if (cancelProcessButton) {
+      cancelProcessButton.style.display = "inline-block";
+      cancelProcessButton.disabled = false;
+    }
+
+    console.log("Iniciando procesamiento de archivo...");
+
+    if (!selectedFile) {
+      console.log("No hay archivo seleccionado");
+      showNotification("Por favor seleccione un archivo", false);
+      if (processFileButton) {
+        processFileButton.disabled = false;
+        removeFileBtn.disabled = false;
+      }
+      return;
+    }
+
+    let selectedDate = null;
+
+    // Si es un archivo de Drive, usar fecha extraída si existe
+    if (selectedFile.fromDrive && selectedFile.extractedDate) {
+      selectedDate = selectedFile.extractedDate;
+      console.log(
+        "Usando fecha extraída del nombre del archivo:",
+        selectedDate
+      );
+    } else {
+      // Para archivos subidos, usar selector de fecha
+      const fileDate = document.getElementById("fileDate");
+      const fileTime = document.getElementById("fileTime");
+
+      if (fileDate && fileDate.value) {
+        const dateParts = fileDate.value.split("-");
+        // Establecer hora actual si no se especifica
+        let hours = 0;
+        let minutes = 0;
+
+        if (fileTime && fileTime.value) {
+          const timeParts = fileTime.value.split(":");
+          hours = parseInt(timeParts[0]);
+          minutes = parseInt(timeParts[1]);
+        } else {
+          // Usar hora actual si no se especifica
+          const now = new Date();
+          hours = now.getHours();
+          minutes = now.getMinutes();
+        }
+
+        selectedDate = new Date(
+          parseInt(dateParts[0]), // año
+          parseInt(dateParts[1]) - 1, // mes (0-11)
+          parseInt(dateParts[2]), // día
+          hours, // hora (actual si no se especifica)
+          minutes // minutos (actual si no se especifica)
+        );
+      }
+    }
+
+    if (selectedDate === null || isNaN(selectedDate.getTime())) {
+      console.error("Fecha seleccionada inválida o nula:", selectedDate);
+      selectedDate = null;
+    } else {
+      console.log(
+        "Fecha seleccionada válida:",
+        selectedDate,
+        "Timestamp:",
+        selectedDate.getTime()
+      );
+    }
+
+    // Mostrar progreso
+    if (progressContainer) {
+      console.log("Mostrando progreso");
+      progressContainer.style.display = "block";
+      progressBar.innerHTML =
+        '<div class="loader"></div><div class="process-status">Preparando archivo...</div>';
+    }
+
+    // Procesar el archivo
+    if (selectedFile.fromDrive) {
+      procesarArchivoDrive(selectedFile.id, selectedDate);
+    } else {
+      procesarArchivo(selectedDate);
+    }
+  }
+
+  function procesarArchivo(selectedDate) {
+    console.log(
+      "Procesando archivo:",
+      selectedFile.name,
+      "Tamaño:",
+      selectedFile.size
+    );
+    updateProcessStatus("Leyendo archivo...");
+
+    const reader = new FileReader();
+
+    reader.onload = function (e) {
+      try {
+        updateProcessStatus("Convirtiendo archivo...");
+        const arrayBuffer = e.target.result;
+        console.log("Archivo leído correctamente. Convirtiendo a base64...");
+
+        // Añadir un pequeño retraso para permitir que la UI se actualice
+        setTimeout(() => {
+          try {
+            const base64data = arrayBufferToBase64(arrayBuffer);
+            console.log(
+              "Conversión a base64 completa. Longitud:",
+              base64data.length
+            );
+            updateProcessStatus("Guardando en Drive...");
+            enviarArchivoAlServidor(
+              base64data,
+              selectedFile.name,
+              selectedDate
+            );
+          } catch (error) {
+            console.error("Error en conversión a base64:", error);
+            handleError("Error al convertir el archivo: " + error.message);
+          }
+        }, 100);
+      } catch (error) {
+        console.error("Error en procesamiento de archivo:", error);
+        handleError("Error al procesar el archivo: " + error.message);
+      }
+    };
+
+    reader.onerror = function (error) {
+      console.error("Error al leer el archivo:", error);
+      handleError("Error al leer el archivo");
+    };
+
+    // Leer el archivo como ArrayBuffer
+    console.log("Iniciando lectura del archivo como ArrayBuffer");
+    reader.readAsArrayBuffer(selectedFile);
+  }
+
+  function procesarArchivoDrive(fileId, selectedDate) {
+    updateProcessStatus("Procesando archivo de Drive...");
+
+    // Añadir indicador para el servidor de que es un archivo existente
+    const useExistingFile = true;
+
+    google.script.run
+      .withSuccessHandler(function (result) {
+        if (result && result.status === "success") {
+          updateProcessStatus("Generando mapa...");
+
+          // Solicitar actualización del mapa
+          google.script.run
+            .withSuccessHandler(function (mapResult) {
+              console.log("Mapa actualizado correctamente:", mapResult);
+
+              if (processFileButton) {
+                processFileButton.disabled = false;
+              }
+
+              if (progressContainer) {
+                progressContainer.style.display = "none";
+              }
+
+              showNotification("Archivo procesado correctamente", true);
+
+              setTimeout(() => {
+                closeUploadPanel();
+                showNotification(
+                  "Recargando página para mostrar cambios...",
+                  true
+                );
+
+                // Recargar completamente la página después de un breve retardo
+                setTimeout(() => {
+                  window.location.reload(true);
+                }, 1500);
+              }, 1000);
+            })
+            .withFailureHandler(function (error) {
+              console.error("Error al actualizar mapa:", error);
+              handleError(error);
+            })
+            .actualizarSVG();
+        } else {
+          const errorMsg =
+            result && result.message
+              ? result.message
+              : "Error desconocido en el servidor";
+          console.error("Error en procesamiento del servidor:", errorMsg);
+          handleError(errorMsg);
+        }
+      })
+      .withFailureHandler(function (error) {
+        console.error("Error al procesar archivo de Drive:", error);
+        handleError(error);
+      })
+      .procesarArchivoExcelDrive(
+        fileId,
+        selectedDate ? selectedDate.getTime() : null,
+        useExistingFile
+      );
+  }
+
+  /**
+   * Envía el archivo procesado al servidor
+   */
+  function enviarArchivoAlServidor(base64data, fileName, selectedDate) {
+    updateProcessStatus("Guardando en Drive...");
+    if (window.processingCancelled) {
+      handleCancel();
+      return;
+    }
+
+    if (!base64data || typeof base64data !== "string") {
+      handleError("Datos inválidos para enviar al servidor");
+      return;
+    }
+
+    console.log("Enviando archivo. Longitud base64:", base64data.length);
+
+    // Crear objeto con los datos
+    const datosParaEnviar = {
+      base64data: base64data,
+      fileName: fileName,
+      timestamp: selectedDate ? selectedDate.getTime() : new Date().getTime(), // Usar la fecha seleccionada o la actual
+      useCustomDate: !!selectedDate, // Indicar si estamos usando una fecha personalizada
+    };
+
+    // Añadir timeout por si la solicitud tarda demasiado
+    // const timeoutId = setTimeout(() => {
+    //   handleError("La solicitud al servidor ha excedido el tiempo de espera (60 segundos)");
+    // }, 60000);
+
+    // Log para verificar que estamos llamando a google.script.run
+    console.log("Llamando a google.script.run.procesarArchivoExcelSeguro");
+
+    // Enviar al servidor
+    google.script.run
+      .withSuccessHandler(function (response) {
+        // clearTimeout(timeoutId);
+        console.log("Respuesta recibida del servidor:", response);
+
+        if (response && response.status === "success") {
+          console.log("Archivo procesado correctamente", response);
+          updateProcessStatus("Generando mapa...");
+
+          // Solicitar actualización del mapa
+          google.script.run
+            .withSuccessHandler(function (result) {
+              console.log("Mapa actualizado correctamente:", result);
+
+              if (processFileButton) {
+                processFileButton.disabled = false;
+              }
+
+              if (progressContainer) {
+                progressContainer.style.display = "none";
+              }
+
+              showNotification("Archivo procesado correctamente", true);
+              if (window.mostrarTopVencimientos) {
+                setTimeout(() => {
+                  try {
+                    window.datosVencimientos =
+                      window.extraerVencimientosDeProductos(
+                        window.datosProductos
+                      );
+                    window.mostrarTopVencimientos();
+                  } catch (error) {
+                    console.error("Error al extraer vencimientos:", error);
+                  }
+                }, 500);
+              }
+
+              setTimeout(() => {
+                closeUploadPanel();
+                showNotification(
+                  "Recargando página para mostrar cambios...",
+                  true
+                );
+
+                // Recargar completamente la página después de un breve retardo
+                setTimeout(() => {
+                  window.location.reload(true);
+                }, 1500);
+              }, 1000);
+            })
+            .withFailureHandler(function (error) {
+              console.error("Error al actualizar mapa:", error);
+              handleError(error);
+            })
+            .actualizarSVG();
+        } else {
+          const errorMsg =
+            response && response.message
+              ? response.message
+              : "Error desconocido en el servidor";
+          console.error("Error en procesamiento del servidor:", errorMsg);
+          handleError(errorMsg);
+        }
+      })
+      .withFailureHandler(function (error) {
+        // clearTimeout(timeoutId);
+        console.error("Error en procesarArchivoExcelSeguro:", error);
+        handleError(error);
+      })
+      .procesarArchivoExcelSeguro(datosParaEnviar);
+  }
+
+  /**
+   * Maneja errores de forma centralizada
+   */
+  function handleError(error) {
+    showNotification("Error: " + error.toString(), false);
+    console.log("Error: " + error.toString(), false);
+
+    if (processFileButton) {
+      processFileButton.disabled = false;
+      processFileButton.innerText = "Procesar archivo";
+    }
+
+    // Ocultar el indicador de progreso
+    if (progressContainer) {
+      progressContainer.style.display = "none";
+    }
+  }
+
+  function handleCancel() {
+    if (processFileButton) {
+      processFileButton.disabled = false;
+    }
+
+    if (cancelProcessButton) {
+      cancelProcessButton.style.display = "none";
+    }
+
+    if (progressContainer) {
+      progressContainer.style.display = "none";
+    }
+
+    showNotification("Procesamiento cancelado por el usuario", false);
+  }
+
+  function updateProcessStatus(message) {
+    const statusElement = document.querySelector(".process-status");
+    if (statusElement) {
+      statusElement.textContent = message;
+    } else {
+      const progressBar = document.getElementById("progressBar");
+      if (progressBar) {
+        // Si no existe el elemento, crearlo
+        const statusDiv = document.createElement("div");
+        statusDiv.className = "process-status";
+        statusDiv.textContent = message;
+        progressBar.appendChild(statusDiv);
+      }
+    }
+  }
+
+  // Reemplaza la función arrayBufferToBase64 con esta versión mejorada
+  function arrayBufferToBase64(buffer) {
+    let binary = "";
+    const bytes = new Uint8Array(buffer);
+    const len = bytes.byteLength;
+
+    // Limitar el tamaño de los chunks para evitar call stack exceeded
+    const CHUNK_SIZE = 1024;
+    for (let i = 0; i < len; i += CHUNK_SIZE) {
+      const slice = bytes.subarray(i, Math.min(i + CHUNK_SIZE, len));
+      const chunk = Array.from(slice);
+      const binaryChunk = String.fromCharCode.apply(null, chunk);
+      binary += binaryChunk;
+    }
+
+    return btoa(binary);
+  }
+
+  // Mostrar notificación
+  function showNotification(message, isSuccess) {
+    if (!uploadResult) return;
+
+    const notificationType = isSuccess
+      ? "notification-success"
+      : "notification-error";
+    const notificationHtml = `
+        <div class="notification ${notificationType}">
+          <span>${message}</span>
+        </div>
+      `;
+
+    uploadResult.innerHTML = notificationHtml;
+
+    if (cancelProcessButton) {
+      cancelProcessButton.style.display = "none";
+    }
+  }
+
+  // SELECT ARCHIVO DRIVE
+  function mostrarCargaDrive(mostrar) {
+    const fileInfo = document.getElementById("fileInfo");
+    if (fileInfo) {
+      if (mostrar) {
+        fileInfo.innerHTML =
+          '<div class="loader"></div><p>Cargando archivos de Drive...</p>';
+      } else {
+        fileInfo.innerHTML = "";
+      }
+    }
+  }
+
+  function mostrarSelectorArchivos(files) {
+    const fileInfo = document.getElementById("fileInfo");
+    if (!fileInfo) return;
+
+    // Verificar si hay archivos
+    if (!files || files.length === 0) {
+      fileInfo.innerHTML = "<p>No se encontraron archivos en Drive</p>";
+      return;
+    }
+
+    // Crear un Set para almacenar los IDs de archivos ya procesados
+    const processedFileIds = new Set();
+
+    let html = '<div class="drive-files-container">';
+    html += "<h4>Seleccione un archivo:</h4>";
+    html += '<div class="drive-files-list">';
+
+    files.forEach((file, index) => {
+      // Verificar si este archivo ya fue procesado
+      if (processedFileIds.has(file.id)) {
+        return; // Saltar este archivo
+      }
+
+      // Añadir el ID al conjunto de procesados
+      processedFileIds.add(file.id);
+
+      const fechaStr = file.fecha
+        ? new Date(file.fecha).toLocaleString()
+        : "Fecha desconocida";
+      html += `
+          <div class="drive-file-item" data-index="${index}">
+            <div class="drive-file-icon">📄</div>
+            <div class="drive-file-info">
+              <div class="drive-file-name">${file.nombre}</div>
+              <div class="drive-file-date">${fechaStr}</div>
+            </div>
+          </div>
+        `;
+    });
+
+    html += "</div></div>";
+    fileInfo.innerHTML = html;
+
+    // Agregar listeners a los archivos
+    document.querySelectorAll(".drive-file-item").forEach((item) => {
+      item.addEventListener("click", function () {
+        const index = parseInt(this.getAttribute("data-index"));
+        seleccionarArchivoDrive(driveFiles[index]);
+      });
+    });
+  }
+
+  function seleccionarArchivoDrive(file) {
+    // Extraer fecha del nombre del archivo (Inventario_YYYY-MM-DD o Inventario_YYYYMMDD)
+    let fechaExtraida = null;
+    const regexConGuiones =
+      /Inventario_(\d{2})_(\d{2})_(\d{4})_(\d{2})_(\d{2})/;
+    const regexSinGuiones = /Inventario_(\d{2})(\d{2})(\d{4})_(\d{2})_(\d{2})/;
+
+    let coincidencia =
+      file.nombre.match(regexConGuiones) || file.nombre.match(regexSinGuiones);
+
+    if (coincidencia) {
+      const day = parseInt(coincidencia[1]);
+      const month = parseInt(coincidencia[2]) - 1; // Los meses en JS van de 0-11
+      const year = parseInt(coincidencia[3]);
+
+      const hours = parseInt(coincidencia[4]);
+      const minutes = parseInt(coincidencia[5]);
+
+      fechaExtraida = new Date(year, month, day, hours, minutes);
+      if (isNaN(fechaExtraida.getTime())) {
+        fechaExtraida = null;
+      }
+    }
+
+    selectedFile = {
+      id: file.id,
+      name: file.nombre,
+      fromDrive: true,
+      extractedDate: fechaExtraida,
+    };
+
+    const fileInfo = document.getElementById("fileInfo");
+    if (fileInfo) {
+      let fechaInfo = "";
+      if (fechaExtraida) {
+        fechaInfo = `<div class="file-date">Fecha detectada: ${fechaExtraida.toLocaleDateString()}</div>`;
+      }
+
+      fileInfo.innerHTML = `
+          <div class="file-info-container">
+            <div class="file-details">
+              <strong>${file.nombre}</strong> (Google Drive)
+              ${fechaInfo}
+            </div>
+            <button class="file-remove-btn" id="removeFileBtn">&times;</button>
+          </div>
+        `;
+
+      // Añadir listener para el botón de eliminar
+      const removeFileBtn = document.getElementById("removeFileBtn");
+      if (removeFileBtn) {
+        removeFileBtn.addEventListener("click", removeSelectedFile);
+      }
+    }
+
+    // Habilitar el botón de procesar
+    if (processFileButton) {
+      processFileButton.disabled = false;
+    }
+  }
+</script>

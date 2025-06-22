@@ -1,0 +1,3109 @@
+<script>
+  /*** VARIABLES GLOBALES Y CONFIGURACIÓN ***/
+  let detalleContainer;
+  let resultadoFiltro;
+  let inputSku;
+  let modal;
+  let filtrando = false;
+  let ubicacionesFiltradas = new Set();
+  let areasSeleccionadas = [];
+  let ubicacionesPorArea = {};
+
+  let datosUbicaciones = null;
+
+  let colorApplicationInProgress = false;
+  let currentOperation = null;
+  let cambioMapaEnProceso = false;
+  let resaltandoUbicaciones = false;
+
+  // Definir funciones en el ámbito global para que sean accesibles
+  window.filtrarPorArea = filtrarPorArea;
+  window.limpiarFiltroArea = limpiarFiltroArea;
+
+  window.filtrarPorSku = filtrarPorSku;
+  window.limpiarFiltro = limpiarFiltro;
+
+  window.showTooltip = showTooltip;
+  window.hideTooltip = hideTooltip;
+  window.highlightElement = highlightElement;
+  window.unhighlightElement = unhighlightElement;
+  window.showUbicacionDetalle = showUbicacionDetalle;
+  window.ordenActual = { campo: "cantidad", ascendente: false };
+
+  document.addEventListener("DOMContentLoaded", function () {
+    // Añadir un poco de retraso para asegurar que el DOM esté completamente cargado
+    setTimeout(function () {
+      inicializarElementosDOM();
+
+      areasSeleccionadas = [];
+
+      const tipoMapaSelector = document.getElementById("tipoMapaSelector");
+      const leyendaOcupacion = document.getElementById("leyenda-ocupacion");
+      const leyendaVencimiento = document.getElementById("leyenda-vencimiento");
+      const fuenteDatosSelector = document.getElementById(
+        "fuenteDatosSelector"
+      );
+
+      if (fuenteDatosSelector) {
+        fuenteDatosSelector.addEventListener("change", function () {
+          const fuenteDatos = fuenteDatosSelector.value;
+          console.log("Cambiando fuente de datos a: " + fuenteDatos);
+
+          // Actualizar el estado en el servidor
+          google.script.run
+            .withSuccessHandler(function (result) {
+              console.log(
+                "Fuente de datos actualizada en el servidor:",
+                result
+              );
+            })
+            .withFailureHandler(function (error) {
+              console.error(
+                "Error al actualizar fuente de datos en servidor:",
+                error
+              );
+            })
+            .actualizarFuenteDatos(fuenteDatos);
+        });
+      }
+
+      tipoMapaSelector.addEventListener("change", function () {
+        const tipoMapa = tipoMapaSelector.value;
+        console.log("Cambiando a tipo de mapa: " + tipoMapa);
+
+        ubicacionesFiltradas.clear();
+        resaltandoUbicaciones = false;
+
+        setTimeout(() => {
+          actualizarVisualizacionMapa(tipoMapa);
+        }, 50);
+
+        // Actualizar el estado en el servidor (en segundo plano, sin recargar la página)
+        google.script.run
+          .withSuccessHandler(function (result) {
+            console.log("Estado de mapa actualizado en el servidor:", result);
+          })
+          .withFailureHandler(function (error) {
+            console.error("Error al actualizar estado en servidor:", error);
+          })
+          .actualizarTipoMapa(tipoMapa);
+      });
+
+      // Después de toda la inicialización, verificar si quedó algún indicador de carga visible
+      setTimeout(function () {
+        document.querySelectorAll(".svg-loading").forEach((el) => {
+          el.style.display = "none";
+        });
+        window.colorApplicationInProgress = false;
+      }, 3000);
+    }, 200);
+
+    document.getElementById("btn-areas").addEventListener("click", function () {
+      const container = document.getElementById("filtro-area-container");
+      if (container) {
+        container.classList.toggle("show");
+      }
+    });
+
+    document.addEventListener("click", function (event) {
+      if (
+        !event.target.matches("#btn-areas") &&
+        !event.target.closest("#filtro-area-container")
+      ) {
+        const dropdowns = document.getElementsByClassName("dropdown-content");
+        for (let i = 0; i < dropdowns.length; i++) {
+          if (dropdowns[i].classList.contains("show")) {
+            dropdowns[i].classList.remove("show");
+          }
+        }
+      }
+    });
+
+    document.querySelectorAll(".checkbox-item").forEach(function (checkbox) {
+      checkbox.addEventListener("click", function (e) {
+        e.stopPropagation(); // Evitar que el clic se propague al contenedor
+      });
+    });
+  });
+
+  function actualizarLeyenda(tipoMapa) {
+    if (tipoMapa === "vencimiento") {
+      leyendaOcupacion.style.display = "none";
+      leyendaVencimiento.style.display = "block";
+    } else {
+      leyendaOcupacion.style.display = "block";
+      leyendaVencimiento.style.display = "none";
+    }
+  }
+
+  function inicializarSelectorFuenteDatos() {
+    google.script.run
+      .withSuccessHandler(function (fuente) {
+        const selector = document.getElementById("fuenteDatosSelector");
+        if (selector && fuente) {
+          selector.value = fuente;
+        }
+      })
+      .obtenerFuenteDatosSeleccionada();
+  }
+
+  /**
+   * Inicializa referencias a elementos del DOM
+   */
+  function inicializarElementosDOM() {
+    inicializarSelectorFuenteDatos();
+
+    detalleContainer = document.getElementById("ubicacion-detalle");
+    resultadoFiltro = document.getElementById("resultado-filtro");
+    inputSku = document.getElementById("filtro-sku");
+    modal = document.getElementById("ubicacion-modal");
+
+    // Control de bandera para evitar inicializaciones múltiples
+    if (window.elementosInicializados) {
+      console.log("Elementos DOM ya inicializados, saltando inicialización");
+      return;
+    }
+    window.elementosInicializados = true;
+
+    // Verificar elementos críticos y registrar error si no existen
+    if (!resultadoFiltro) {
+      console.error("Elemento 'resultado-filtro' no encontrado en el DOM");
+    }
+    if (!inputSku) {
+      console.error("Elemento 'filtro-sku' no encontrado en el DOM");
+    }
+
+    // Configurar eventos para tooltips y modal
+    configurarTooltips();
+    configurarModalUbicacion();
+
+    configurarFiltrado();
+
+    cargarDatosProductos();
+
+    // Usar una sola llamada a setTimeout para inicialización posterior
+    setTimeout(function () {
+      console.log("Inicializando tabla de vencimientos...");
+      inicializarTablaVencimientos();
+
+      // Solicitar datos de ubicaciones una sola vez
+      console.log("Solicitando datos de ubicaciones...");
+      if (!window.datosUbicacionesSolicitados) {
+        window.datosUbicacionesSolicitados = true;
+        cargarDatosUbicaciones();
+      }
+    }, 1000);
+
+    // Instalar un intervalo de seguridad para ocultar indicadores de carga atascados
+    if (!window.indicadorInterval) {
+      window.indicadorInterval = setInterval(() => {
+        if (!colorApplicationInProgress) {
+          document.querySelectorAll(".svg-loading").forEach((el) => {
+            if (el.style.display !== "none") {
+              console.log("Ocultando indicador de carga atascado");
+              el.style.display = "none";
+            }
+          });
+        }
+      }, 5000);
+    }
+
+    if (window.inicializarAutocompletado) {
+      window.inicializarAutocompletado();
+    }
+
+    const stockThreshold = document.getElementById("stockThreshold");
+    if (stockThreshold) {
+      stockThreshold.addEventListener("change", function () {
+        actualizarDashboardCards();
+      });
+    }
+  }
+
+  /*** FUNCIONES DE TOOLTIPS Y EFECTOS DE HOVER ***/
+  /**
+   * Muestra el tooltip con información de la ubicación
+   */
+  function showTooltip(e) {
+    // Determinar el elemento correcto para obtener datos
+    let targetElement = getTargetElement(e);
+    if (!targetElement) return;
+
+    const tooltip = document.getElementById("tooltip");
+    if (!tooltip) return;
+
+    const id = targetElement.getAttribute("data-ubicacion");
+    if (!id) return;
+
+    // Construir contenido del tooltip
+    let tooltipContent = `<strong>${id}</strong><br>`;
+
+    const tipoMapaSelector = document.getElementById("tipoMapaSelector");
+    const tipoMapa = tipoMapaSelector ? tipoMapaSelector.value : "ocupacion";
+
+    if (tipoMapa === "vencimiento") {
+      const infoCategorias = targetElement.getAttribute(
+        "data-categorias-vida-util"
+      );
+      const vidaUtil = targetElement.getAttribute("data-porcentaje");
+      const infoConteo = targetElement.getAttribute("data-conteo-vida-util");
+      const sinPallets = targetElement.getAttribute("data-utilizado") === "0";
+
+      let categorias = [];
+      let conteo = {};
+
+      try {
+        if (infoCategorias) {
+          categorias = JSON.parse(infoCategorias);
+        }
+        if (infoConteo) {
+          conteo = JSON.parse(infoConteo);
+        }
+      } catch (error) {
+        console.error("Error al parsear categorías:", error);
+      }
+
+      if (sinPallets) {
+        tooltipContent += "Sin productos";
+      } else if (categorias.length > 1) {
+        tooltipContent += '<div class="tooltip-vida-util">';
+        tooltipContent +=
+          "<strong>Múltiples categorías de vida útil:</strong><br>";
+
+        // Mostrar cada categoría presente con cantidad de pallets
+        const mapaCategorias = {
+          critico: ["0-25%", "#FF0000"],
+          bajo: ["25-50%", "#FF7700"],
+          medio: ["50-75%", "#FFFF00"],
+          alto: ["75-100%", "#00FF00"],
+        };
+
+        categorias.forEach((cat) => {
+          if (mapaCategorias[cat]) {
+            const [rango, color] = mapaCategorias[cat];
+            const cantidad = conteo[cat] || 0;
+            tooltipContent += `<div style="margin-top:3px;">
+                  <span style="display:inline-block; width:12px; height:12px; background-color:${color}; margin-right:3px;"></span>
+                  ${rango}: <b>${cantidad}</b> pallets
+                </div>`;
+          }
+        });
+
+        tooltipContent += `<div style="margin-top:5px;">Vida útil promedio: <b>${vidaUtil}%</b></div>`;
+        tooltipContent += "</div>";
+      } else {
+        tooltipContent += `<div>Vida útil: ${vidaUtil}%</div>`;
+      }
+    } else {
+      // Modo ocupación
+      const capacidad = targetElement.getAttribute("data-capacidad") || "0";
+      const utilizado = targetElement.getAttribute("data-utilizado") || "0";
+      const porcentaje = targetElement.getAttribute("data-porcentaje") || "0";
+
+      tooltipContent += `Capacidad: ${capacidad}<br> `;
+      tooltipContent += `Utilizado: ${utilizado}<br> `;
+      tooltipContent += `Ocupación: ${porcentaje}%`;
+    }
+
+    tooltip.innerHTML = tooltipContent;
+    tooltip.style.opacity = "1";
+
+    // Posicionar tooltip cerca del cursor
+    posicionarTooltip(e, tooltip);
+  }
+
+  /**
+   * Determina el elemento objetivo para el tooltip o click
+   */
+  function getTargetElement(e) {
+    let targetElement = e.target;
+
+    // Buscar el elemento con data-ubicacion
+    while (targetElement && !targetElement.hasAttribute("data-ubicacion")) {
+      // Salir si es un elemento de referencia o texto
+      if (
+        (targetElement.classList &&
+          (targetElement.classList.contains("ubicacion-referencia") ||
+            targetElement.classList.contains("ubicacion-texto"))) ||
+        (targetElement.id && targetElement.id.startsWith("ref"))
+      ) {
+        return null;
+      }
+
+      targetElement = targetElement.parentElement;
+    }
+
+    return targetElement;
+  }
+
+  /**
+   * Posiciona el tooltip adecuadamente en la pantalla
+   */
+  function posicionarTooltip(e, tooltip) {
+    // Posición inicial cerca del cursor
+    let x = e.pageX + 10;
+    let y = e.pageY + 10;
+
+    // Ajustar si se sale de la pantalla
+    const tooltipRect = tooltip.getBoundingClientRect();
+    const windowWidth = window.innerWidth;
+    const windowHeight = window.innerHeight;
+
+    // Ajuste horizontal
+    if (x + tooltipRect.width > windowWidth) {
+      x = x - tooltipRect.width - 20;
+    }
+
+    // Ajuste vertical
+    if (y + tooltipRect.height > windowHeight) {
+      y = y - tooltipRect.height - 20;
+    }
+
+    // Aplicar posición
+    tooltip.style.left = x + "px";
+    tooltip.style.top = y + "px";
+  }
+
+  /**
+   * Oculta el tooltip
+   */
+  function hideTooltip() {
+    const tooltip = document.getElementById("tooltip");
+    if (tooltip) {
+      tooltip.style.opacity = "0";
+    }
+  }
+
+  /**
+   * Resalta el elemento al pasar el mouse
+   */
+  function highlightElement(e) {
+    // Encontrar el rectángulo de la ubicación
+    let targetElement = e.target;
+    if (targetElement.tagName === "g") {
+      targetElement = targetElement.querySelector("rect.ubicacion");
+    } else if (
+      targetElement.tagName !== "rect" ||
+      !targetElement.classList.contains("ubicacion")
+    ) {
+      targetElement = targetElement
+        .closest("g")
+        ?.querySelector("rect.ubicacion");
+    }
+
+    if (targetElement) {
+      targetElement.classList.add("ubicacion-hover");
+    }
+  }
+
+  /**
+   * Elimina el resaltado al quitar el mouse
+   */
+  function unhighlightElement() {
+    document.querySelectorAll("rect.ubicacion").forEach(function (rect) {
+      rect.classList.remove("ubicacion-hover");
+    });
+  }
+
+  /*** INICIALIZACIÓN DE COMPONENTES ***/
+  /**
+   * Configura tooltips y eventos de hover para elementos SVG
+   */
+  function configurarTooltips() {
+    const tooltip = document.getElementById("tooltip");
+    const svgElements = document.querySelectorAll("g[id][data-ubicacion]");
+
+    svgElements.forEach(function (element) {
+      // Seleccionar rectángulos dentro de cada grupo
+      const rects = element.querySelectorAll("rect.ubicacion");
+
+      // Añadir eventos al grupo g
+      element.addEventListener("mousemove", showTooltip);
+      element.addEventListener("mouseout", hideTooltip);
+      element.addEventListener("mouseover", highlightElement);
+      element.addEventListener("mouseout", unhighlightElement);
+      element.addEventListener("click", showUbicacionDetalle);
+
+      // Añadir eventos a cada rectángulo dentro del grupo
+      rects.forEach(function (rect) {
+        rect.addEventListener("mousemove", showTooltip);
+        rect.addEventListener("mouseout", hideTooltip);
+        rect.addEventListener("mouseover", highlightElement);
+        rect.addEventListener("mouseout", unhighlightElement);
+        rect.addEventListener("click", showUbicacionDetalle);
+      });
+    });
+  }
+
+  /**
+   * Configura el modal de detalle de ubicación
+   */
+  function configurarModalUbicacion() {
+    const closeModal = document.getElementById("close-modal");
+
+    // Cerrar modal al hacer clic en X
+    if (closeModal) {
+      closeModal.addEventListener("click", function () {
+        modal.style.display = "none";
+      });
+    }
+
+    // Cerrar modal al hacer clic fuera del contenido
+    window.addEventListener("click", function (event) {
+      if (event.target === modal) {
+        modal.style.display = "none";
+      }
+    });
+  }
+
+  /**
+   * Configura el sistema de filtrado de productos
+   */
+  function configurarFiltrado() {
+    const btnFiltrarArea = document.getElementById("btn-filtrar-area");
+    const btnLimpiarArea = document.getElementById("btn-limpiar-area");
+    const btnSeleccionarTodas = document.getElementById(
+      "btn-seleccionar-todas"
+    );
+
+    if (btnFiltrarArea) {
+      btnFiltrarArea.addEventListener("click", filtrarPorArea);
+    }
+
+    if (btnLimpiarArea) {
+      btnLimpiarArea.addEventListener("click", limpiarFiltroArea);
+    }
+
+    if (btnSeleccionarTodas) {
+      btnSeleccionarTodas.addEventListener("click", function () {
+        const container = document.getElementById("filtro-area-container");
+        if (container) {
+          const checkboxes = container.querySelectorAll(
+            'input[type="checkbox"]'
+          );
+          checkboxes.forEach((checkbox) => {
+            checkbox.checked = true;
+          });
+          filtrarPorArea();
+        }
+      });
+    }
+
+    // Agregar comportamiento de filtrado automático a todos los checkboxes de áreas existentes
+    const container = document.getElementById("filtro-area-container");
+    if (container) {
+      // Para "Seleccionar todas"
+      const checkboxAll = container.querySelector("#area-all");
+      if (checkboxAll) {
+        checkboxAll.addEventListener("change", function () {
+          const checkboxes = container.querySelectorAll(
+            'input[type="checkbox"]:not(#area-all)'
+          );
+          checkboxes.forEach((checkbox) => {
+            checkbox.checked = this.checked;
+          });
+          filtrarPorArea();
+        });
+      }
+
+      // Para cada checkbox individual
+      const checkboxes = container.querySelectorAll(
+        'input[type="checkbox"]:not(#area-all)'
+      );
+      checkboxes.forEach((checkbox) => {
+        checkbox.addEventListener("change", function () {
+          actualizarEstadoSeleccionarTodas();
+          filtrarPorArea();
+        });
+      });
+    }
+  }
+
+  function actualizarEstadoSeleccionarTodas() {
+    const container = document.getElementById("filtro-area-container");
+    const checkboxAll = document.getElementById("area-all");
+
+    if (container && checkboxAll) {
+      const checkboxes = container.querySelectorAll(
+        'input[type="checkbox"]:not(#area-all)'
+      );
+      const checkboxesTotal = checkboxes.length;
+      const checkboxesChecked = container.querySelectorAll(
+        'input[type="checkbox"]:not(#area-all):checked'
+      ).length;
+
+      // Actualizar "Seleccionar todas" según estado de los demás
+      checkboxAll.checked =
+        checkboxesChecked > 0 && checkboxesChecked === checkboxesTotal;
+
+      // Estado intermedio (algunos seleccionados pero no todos)
+      if (checkboxesChecked > 0 && checkboxesChecked < checkboxesTotal) {
+        checkboxAll.indeterminate = true;
+      } else {
+        checkboxAll.indeterminate = false;
+      }
+    }
+  }
+
+  /**
+   * Carga los datos de productos desde el script JSON embebido
+   */
+  function cargarDatosProductos() {
+    const scriptDatos = document.getElementById("datos-productos");
+
+    if (scriptDatos) {
+      try {
+        const contenidoJSON = scriptDatos.textContent.trim();
+        window.datosProductos = JSON.parse(contenidoJSON);
+
+        // Solo extraer vencimientos si no existen previamente
+        if (
+          (!window.datosVencimientos ||
+            Object.keys(window.datosVencimientos).length === 0) &&
+          window.extraerVencimientosDeProductos &&
+          Object.keys(window.datosProductos).length > 0
+        ) {
+          window.datosVencimientos = window.extraerVencimientosDeProductos(
+            window.datosProductos
+          );
+        }
+      } catch (error) {
+        console.error("Error al parsear datos:", error);
+        window.datosProductos = {};
+      }
+    } else {
+      console.warn("No se encontraron datos de productos");
+      window.datosProductos = {};
+    }
+  }
+
+  /*** FUNCIONES DE FILTRADO ***/
+  /**
+   * Filtra ubicaciones por SKU
+   */
+  function aplicarTodosFiltros() {
+    const sku = document
+      .getElementById("filtro-sku")
+      .value.trim()
+      .toUpperCase();
+    const ubicacion = document
+      .getElementById("filtro-ubicacion")
+      .value.trim()
+      .toUpperCase();
+    const producto = document
+      .getElementById("filtro-producto")
+      .value.trim()
+      .toUpperCase();
+    const lpn = document
+      .getElementById("filtro-lpn")
+      .value.trim()
+      .toUpperCase();
+
+    // Obtener áreas seleccionadas
+    const areasSeleccionadasActuales = [];
+    const container = document.getElementById("filtro-area-container");
+    if (container) {
+      const checkboxesSeleccionadas = container.querySelectorAll(
+        'input[type="checkbox"]:checked'
+      );
+      checkboxesSeleccionadas.forEach((cb) =>
+        areasSeleccionadasActuales.push(cb.value)
+      );
+    }
+
+    console.log("Aplicando filtros:", {
+      sku,
+      ubicacion,
+      producto,
+      lpn,
+      areas: areasSeleccionadasActuales,
+    });
+
+    // Aplicar filtro con todos los valores
+    filtrarDatosCompletos(
+      sku,
+      ubicacion,
+      producto,
+      lpn,
+      areasSeleccionadasActuales
+    );
+  }
+
+  function filtrarDatosCompletos(
+    sku,
+    ubicacion,
+    producto,
+    lpn,
+    areasSeleccionadas
+  ) {
+    // Guardar filtros actuales para referencia
+    window.filtrosActuales = {
+      sku,
+      ubicacion,
+      producto,
+      lpn,
+      areasSeleccionadas,
+    };
+
+    // Primero, limpiar el filtro actual sin limpiar inputs
+    limpiarFiltro(false);
+
+    // Inicializar conjunto para ubicaciones filtradas
+    ubicacionesFiltradas.clear();
+
+    // Mostrar mensaje de carga
+    if (resultadoFiltro) {
+      resultadoFiltro.innerHTML = "<p>Aplicando filtros...</p>";
+    }
+
+    // Comprobar si hay al menos un filtro activo
+    const hayFiltroActivo =
+      sku ||
+      ubicacion ||
+      producto ||
+      lpn ||
+      (areasSeleccionadas && areasSeleccionadas.length > 0);
+    if (!hayFiltroActivo) {
+      if (resultadoFiltro) {
+        resultadoFiltro.innerHTML =
+          "<p>Por favor, ingrese al menos un criterio de filtrado</p>";
+      }
+      return;
+    }
+
+    // Filtrar ubicaciones según los criterios
+    const ubicacionesResultantes = filtrarUbicacionesPorCriterios(
+      sku,
+      ubicacion,
+      producto,
+      lpn,
+      areasSeleccionadas
+    );
+    console.log(ubicacionesResultantes);
+
+    // Y luego actualizamos el conjunto global
+    ubicacionesFiltradas.clear();
+    ubicacionesResultantes.forEach((ubicacion) => {
+      ubicacionesFiltradas.add(ubicacion);
+    });
+
+    // Mostrar resultados
+    mostrarResultadosFiltroCompleto(
+      sku,
+      producto,
+      ubicacionesFiltradas,
+      resultadoFiltro
+    );
+
+    // Resaltar en el mapa
+    resaltarUbicaciones();
+
+    // Actualizar tabla de vencimientos y calendario
+    filtrarTablaVencimientos(Array.from(ubicacionesFiltradas));
+    actualizarCalendarioConFiltro(Array.from(ubicacionesFiltradas));
+  }
+
+  function filtrarUbicacionesPorCriterios(
+    sku,
+    ubicacion,
+    producto,
+    lpn,
+    areasSeleccionadas
+  ) {
+    const descripcionProducto = new Set();
+    const ubicacionesResultado = new Set();
+
+    // Si no hay datos de productos, intentar cargarlos
+    if (
+      !window.datosProductos ||
+      Object.keys(window.datosProductos).length === 0
+    ) {
+      cargarDatosProductos();
+    }
+
+    // Obtener ubicaciones por área
+    const ubicacionesPorAreaSet = new Set();
+    if (areasSeleccionadas && areasSeleccionadas.length > 0) {
+      areasSeleccionadas.forEach((area) => {
+        const ubicacionesArea = ubicacionesPorArea[area] || new Set();
+        ubicacionesArea.forEach((ubicacion) => {
+          ubicacionesPorAreaSet.add(ubicacion);
+        });
+      });
+    }
+
+    // Aplicar filtro por SKU si existe
+    if (sku && window.datosProductos && window.datosProductos[sku]) {
+      const skuUbicaciones = window.datosProductos[sku].ubicaciones || [];
+      console.log("item:", window.datosProductos[sku]);
+      skuUbicaciones.forEach((item) => {
+        // Si hay filtro de área, verificar que la ubicación pertenece al área
+        if (areasSeleccionadas && areasSeleccionadas.length > 0) {
+          if (ubicacionesPorAreaSet.has(item.ubicacion)) {
+            ubicacionesResultado.add(item.ubicacion);
+          }
+          if (
+            !descripcionProducto.has(window.datosProductos[sku].descripcion)
+          ) {
+            descripcionProducto.add(window.datosProductos[sku].descripcion);
+          }
+        } else {
+          ubicacionesResultado.add(item.ubicacion);
+          if (
+            !descripcionProducto.has(window.datosProductos[sku].descripcion)
+          ) {
+            descripcionProducto.add(window.datosProductos[sku].descripcion);
+          }
+        }
+      });
+    }
+    // Si no hay filtro por SKU pero sí por área
+    else if (areasSeleccionadas && areasSeleccionadas.length > 0) {
+      ubicacionesPorAreaSet.forEach((ubicacion) => {
+        ubicacionesResultado.add(ubicacion);
+      });
+    }
+
+    // Aplicar filtro por ubicación específica
+    if (ubicacion) {
+      const ubicacionesActuales = new Set(ubicacionesResultado);
+      ubicacionesResultado.clear();
+
+      ubicacionesActuales.forEach((ubi) => {
+        if (ubi.includes(ubicacion)) {
+          ubicacionesResultado.add(ubi);
+        }
+      });
+
+      // Si no había filtros previos, buscar en todas las ubicaciones
+      if (ubicacionesActuales.size === 0) {
+        // Buscar en todas las ubicaciones disponibles
+        const elementos = document.querySelectorAll("g[data-ubicacion]");
+        elementos.forEach((element) => {
+          const id = element.getAttribute("data-ubicacion");
+          if (id && id.includes(ubicacion)) {
+            ubicacionesResultado.add(id);
+          }
+        });
+      }
+    }
+
+    // Aplicar filtro por descripción de producto
+    if (producto && window.datosProductos) {
+      const skusCoincidentes = [];
+
+      // Buscar SKUs cuyas descripciones coincidan
+      Object.keys(window.datosProductos).forEach((sku) => {
+        const descripcion = window.datosProductos[sku].descripcion || "";
+        if (descripcion.toUpperCase().includes(producto)) {
+          skusCoincidentes.push(sku);
+        }
+      });
+
+      // Si hay resultados y ya teníamos otros filtros, hacer intersección
+      if (skusCoincidentes.length > 0) {
+        if (ubicacionesResultado.size > 0) {
+          const ubicacionesActuales = new Set(ubicacionesResultado);
+          ubicacionesResultado.clear();
+
+          // Conservar solo ubicaciones que tengan estos SKUs
+          skusCoincidentes.forEach((sku) => {
+            const ubicacionesSku = window.datosProductos[sku].ubicaciones || [];
+            ubicacionesSku.forEach((item) => {
+              if (ubicacionesActuales.has(item.ubicacion)) {
+                ubicacionesResultado.add(item.ubicacion);
+              }
+            });
+          });
+        } else {
+          // Si no había filtros previos, agregar todas las ubicaciones
+          skusCoincidentes.forEach((sku) => {
+            const ubicacionesSku = window.datosProductos[sku].ubicaciones || [];
+            ubicacionesSku.forEach((item) => {
+              ubicacionesResultado.add(item.ubicacion);
+            });
+          });
+        }
+      }
+    }
+
+    // Aplicar filtro por LPN (requiere datos de niveles)
+    if (lpn && datosUbicaciones) {
+      const ubicacionesConLpn = new Set();
+
+      // Buscar en la información detallada de ubicaciones
+      const tipoMapa =
+        document.getElementById("tipoMapaSelector")?.value || "ocupacion";
+      const datosActuales = datosUbicaciones[tipoMapa] || {};
+
+      // Recorrer todas las ubicaciones con sus niveles
+      Object.entries(datosActuales).forEach(([id, datos]) => {
+        if (datos.niveles) {
+          // Buscar en cada nivel si tiene el LPN
+          Object.values(datos.niveles).forEach((nivel) => {
+            if (nivel.skus) {
+              Object.values(nivel.skus).forEach((skuInfo) => {
+                if (skuInfo.lpns && Array.isArray(skuInfo.lpns)) {
+                  // Verificar si algún LPN coincide
+                  if (skuInfo.lpns.some((itemLpn) => itemLpn.includes(lpn))) {
+                    ubicacionesConLpn.add(id);
+                  }
+                }
+              });
+            }
+          });
+        }
+      });
+
+      // Aplicar intersección si ya hay filtros previos
+      if (ubicacionesResultado.size > 0) {
+        const ubicacionesActuales = new Set(ubicacionesResultado);
+        ubicacionesResultado.clear();
+
+        ubicacionesConLpn.forEach((id) => {
+          if (ubicacionesActuales.has(id)) {
+            ubicacionesResultado.add(id);
+          }
+        });
+      } else {
+        // Si no había filtros previos, usar todas las ubicaciones con el LPN
+        ubicacionesConLpn.forEach((id) => {
+          ubicacionesResultado.add(id);
+        });
+      }
+    }
+
+    // Devolver el conjunto de ubicaciones filtradas
+    return ubicacionesResultado;
+  }
+
+  function mostrarResultadosFiltroCompleto(
+    sku,
+    descripcion,
+    ubicacionesSet,
+    resultadoElement
+  ) {
+    const totalUbicaciones = ubicacionesSet.size;
+
+    if (totalUbicaciones === 0) {
+      resultadoElement.innerHTML =
+        '<p class="sin-resultados">No se encontraron resultados con los criterios seleccionados</p>';
+      return;
+    }
+
+    // Obtener información resumida de ubicaciones
+    let html = "<div>";
+    // html += `<p><strong>Producto:</strong> ${sku} - ${descripcion}</p>`;
+    html += `<p><strong>Resultados:</strong> ${totalUbicaciones} ubicaciones encontradas <button id="toggleDetalles" class="btn-toggle">Mostrar detalles</button></p>`;
+
+    // Contenedor para la tabla (inicialmente oculto)
+    html += '<div id="detalleUbicaciones" style="display:none;">';
+    html += '<div class="lista-ubicaciones">';
+
+    // Agregar columnas adicionales
+    const tipoMapa =
+      document.getElementById("tipoMapaSelector")?.value || "ocupacion";
+    html += "<table><tr><th>Ubicación</th><th>Área</th><th>Ocupación</th>";
+
+    // Agregar columna vida útil si estamos en modo vencimiento
+    if (tipoMapa === "vencimiento") {
+      html += "<th>Vida Útil</th>";
+    }
+
+    html += "</tr>";
+
+    // Obtener información de área y otros datos para cada ubicación
+    const ubicacionesConInfo = [];
+    ubicacionesSet.forEach((ubicacion) => {
+      // Buscar el elemento para obtener datos
+      const elemento = document.querySelector(
+        `g[data-ubicacion="${ubicacion}"]`
+      );
+      const area = elemento
+        ? elemento.getAttribute("data-area") || "Sin área"
+        : "Sin área";
+      const ocupacion = elemento
+        ? elemento.getAttribute("data-porcentaje") || "0"
+        : "0";
+      const vidaUtil =
+        tipoMapa === "vencimiento"
+          ? elemento
+            ? elemento.getAttribute("data-porcentaje") || "0"
+            : "0"
+          : "0";
+
+      ubicacionesConInfo.push({ ubicacion, area, ocupacion, vidaUtil });
+    });
+
+    // Ordenar por ubicación
+    ubicacionesConInfo.sort((a, b) => a.ubicacion.localeCompare(b.ubicacion));
+
+    // Agregar filas a la tabla
+    ubicacionesConInfo.forEach((item) => {
+      html += `<tr>
+              <td>${item.ubicacion}</td>
+              <td>${item.area}</td>
+              <td>${item.ocupacion}%</td>`;
+
+      // Agregar celda de vida útil si corresponde
+      if (tipoMapa === "vencimiento") {
+        const colorClass = getVidaUtilColorClass(item.vidaUtil);
+        html += `<td><span class="${colorClass}">${item.vidaUtil}%</span></td>`;
+      }
+
+      html += "</tr>";
+    });
+
+    html += "</table></div></div>";
+    resultadoElement.innerHTML = html;
+
+    // Configurar botón para mostrar/ocultar detalles
+    document
+      .getElementById("toggleDetalles")
+      .addEventListener("click", function () {
+        const detalleDiv = document.getElementById("detalleUbicaciones");
+        if (detalleDiv.style.display === "none") {
+          detalleDiv.style.display = "block";
+          this.textContent = "Ocultar detalles";
+        } else {
+          detalleDiv.style.display = "none";
+          this.textContent = "Mostrar detalles";
+        }
+      });
+
+    // Guardar ubicaciones en el conjunto global para el resaltado
+    ubicacionesFiltradas = new Set(ubicacionesSet);
+  }
+
+  function filtrarPorSku(inputElement) {
+    const sku = inputElement.value.trim().toUpperCase();
+    console.log("Filtrando por SKU:", sku);
+
+    const resultadoFiltro = document.getElementById("resultado-filtro");
+
+    if (!resultadoFiltro) {
+      console.error("Elemento 'resultado-filtro' no encontrado en el DOM");
+      alert("Error: No se pudo encontrar el elemento para mostrar resultados");
+      return;
+    }
+
+    if (!sku) {
+      resultadoFiltro.innerHTML =
+        '<p class="sin-resultados">Ingrese un SKU para filtrar</p>';
+      return;
+    }
+
+    // Limpiar filtro previo sin limpiar input
+    limpiarFiltro(false);
+
+    // Verificar si datosProductos está disponible
+    if (
+      !window.datosProductos ||
+      Object.keys(window.datosProductos).length === 0
+    ) {
+      cargarDatosProductos();
+    }
+
+    const productos = window.datosProductos || {};
+
+    if (!productos[sku]) {
+      resultadoFiltro.innerHTML = `<p class="sin-resultados">No se encontraron resultados para el SKU: ${sku}</p>`;
+      return;
+    }
+
+    const producto = productos[sku];
+
+    if (areasSeleccionadas.length > 0) {
+      // Obtener las ubicaciones del área
+      const ubicacionesDeAreas = new Set();
+
+      areasSeleccionadas.forEach((area) => {
+        const ubicacionesArea = ubicacionesPorArea[area] || new Set();
+        ubicacionesArea.forEach((ubicacion) => {
+          ubicacionesDeAreas.add(ubicacion);
+        });
+      });
+
+      // Filtrar las ubicaciones del producto por las áreas seleccionadas
+      const ubicacionesFiltradas = producto.ubicaciones.filter((item) =>
+        ubicacionesDeAreas.has(item.ubicacion)
+      );
+
+      if (ubicacionesFiltradas.length === 0) {
+        const areasTexto = areasSeleccionadas.join(", ");
+        resultadoFiltro.innerHTML = `<p class="sin-resultados">El SKU ${sku} no se encuentra en las áreas seleccionadas: ${areasTexto}</p>`;
+        return;
+      }
+
+      // Usar producto filtrado por áreas
+      const productoFiltrado = {
+        descripcion: producto.descripcion,
+        ubicaciones: ubicacionesFiltradas,
+      };
+
+      mostrarResultadosFiltroCompleto(
+        sku,
+        productoFiltrado.descripcion,
+        productoFiltrado.ubicaciones,
+        resultadoFiltro
+      );
+    } else {
+      // Si no hay filtro de área, mostrar todas las ubicaciones
+      mostrarResultadosFiltroCompleto(
+        sku,
+        productoFiltrado.descripcion,
+        productoFiltrado.ubicaciones,
+        resultadoFiltro
+      );
+    }
+  }
+
+  // function mostrarResultadoFiltro(sku, producto, resultadoElement) {
+  //   // Agrupar por ubicación para un resumen más claro
+  //   const ubicacionesAgrupadas = {};
+
+  //   producto.ubicaciones.forEach(function(item) {
+  //       if (!ubicacionesAgrupadas[item.ubicacion]) {
+  //           ubicacionesAgrupadas[item.ubicacion] = {
+  //               cantidad: 0,
+  //               cajas: 0,
+  //               area: '',
+  //               vidaUtil: 0,
+  //               ocupacion: 0
+  //           };
+  //       }
+  //       ubicacionesAgrupadas[item.ubicacion].cantidad += item.cantidad || 0;
+  //       ubicacionesAgrupadas[item.ubicacion].cajas += item.cajas || 0;
+
+  //       // Intentar obtener el área y vida útil desde los datos de ubicaciones
+  //       if (datosUbicaciones) {
+  //           const tipoMapa = document.getElementById('tipoMapaSelector')?.value || 'ocupacion';
+  //           const elemento = document.querySelector(`g[data-ubicacion="${item.ubicacion}"]`);
+  //           ubicacionesAgrupadas[item.ubicacion].area = elemento ? elemento.getAttribute('data-area') || 'Sin área' : 'Sin área';
+  //           ubicacionesAgrupadas[item.ubicacion].ocupacion = elemento ? elemento.getAttribute('data-porcentaje') || '0' : '0';
+
+  //           // Si estamos en modo vencimiento, intentar obtener la vida útil
+  //           if (tipoMapa === 'vencimiento' && datosUbicaciones.vencimiento &&
+  //               datosUbicaciones.vencimiento[item.ubicacion]) {
+  //               ubicacionesAgrupadas[item.ubicacion].vidaUtil =
+  //                   datosUbicaciones.vencimiento[item.ubicacion].porcentaje || '0';
+  //           }
+  //       }
+  //   });
+
+  //   const totalUbicaciones = Object.keys(ubicacionesAgrupadas).length;
+  //   const totalCantidad = Object.values(ubicacionesAgrupadas).reduce((sum, val) => sum + val.cantidad, 0);
+  //   const totalCajas = Object.values(ubicacionesAgrupadas).reduce((sum, val) => sum + val.cajas, 0);
+
+  //   // Generar HTML de resultados con desplegable
+  //   let html = '<div>';
+  //   html += `<p><strong>Producto:</strong> ${sku} - ${producto.descripcion}</p>`;
+  //   html += `<p><strong>Resumen:</strong> ${totalUbicaciones} ubicaciones, ${totalCantidad.toFixed(2)} pallets, ${totalCajas.toFixed(0)} cajas <button id="toggleDetalles" class="btn-toggle">Mostrar detalles</button></p>`;
+
+  //   // Contenedor para la tabla (inicialmente oculto)
+  //   html += '<div id="detalleUbicaciones" style="display:none;">';
+  //   html += '<div class="lista-ubicaciones">';
+  //   html += '<table><tr><th>Ubicación</th><th>Área</th><th>Pallets</th><th>Cajas</th>';
+
+  //   // Agregar columna vida útil si estamos en modo vencimiento
+  //   const tipoMapa = document.getElementById('tipoMapaSelector')?.value || 'ocupacion';
+  //   if (tipoMapa === 'vencimiento') {
+  //       html += '<th>Vida Útil</th>';
+  //   }
+
+  //   html += '</tr>';
+
+  //   // Convertir a array para ordenar
+  //   const ubicacionesArray = Object.entries(ubicacionesAgrupadas).map(([ubicacion, datos]) => ({
+  //       ubicacion,
+  //       ...datos
+  //   }));
+
+  //   // Ordenar por cantidad descendente
+  //   ubicacionesArray.sort((a, b) => b.cantidad - a.cantidad);
+
+  //   ubicacionesArray.forEach(function(item) {
+  //       html += `<tr><td>${item.ubicacion}</td><td>${item.area}</td><td>${item.cantidad.toFixed(2)}</td><td>${item.cajas.toFixed(0)}</td>`;
+
+  //       // Agregar celda de vida útil si corresponde
+  //       if (tipoMapa === 'vencimiento') {
+  //           const colorClass = getVidaUtilColorClass(item.vidaUtil);
+  //           html += `<td><span class="${colorClass}">${item.vidaUtil}%</span></td>`;
+  //       }
+
+  //       html += '</tr>';
+  //   });
+
+  //   html += '</table></div></div>';
+  //   resultadoElement.innerHTML = html;
+
+  //   document.getElementById('toggleDetalles').addEventListener('click', function() {
+  //       const detalleDiv = document.getElementById('detalleUbicaciones');
+  //       if (detalleDiv.style.display === 'none') {
+  //           detalleDiv.style.display = 'block';
+  //           this.textContent = 'Ocultar detalles';
+  //       } else {
+  //           detalleDiv.style.display = 'none';
+  //           this.textContent = 'Mostrar detalles';
+  //       }
+  //   });
+
+  //   // Guardar para resaltar en el mapa
+  //   ubicacionesFiltradas = new Set(Object.keys(ubicacionesAgrupadas));
+
+  //   // Resaltar en el mapa
+  //   if (!resaltandoUbicaciones) {
+  //       resaltarUbicaciones();
+  //   }
+  // }
+
+  // Función auxiliar para determinar la clase de color según vida útil
+  function getVidaUtilColorClass(vidaUtil) {
+    vidaUtil = parseFloat(vidaUtil);
+    if (vidaUtil >= 75) return "color-alto";
+    if (vidaUtil >= 50) return "color-medio";
+    if (vidaUtil >= 25) return "color-bajo";
+    return "color-critico";
+  }
+
+  function limpiarFiltro(limpiarInput = true) {
+    const inputElement = document.getElementById("filtro-sku");
+    const resultadoFiltro = document.getElementById("resultado-filtro");
+
+    const sku = document.getElementById("filtro-sku");
+    const ubicacion = document.getElementById("filtro-ubicacion");
+    const producto = document.getElementById("filtro-producto");
+    const lpn = document.getElementById("filtro-lpn");
+
+    if (limpiarInput && inputElement) {
+      inputElement.value = "";
+    }
+
+    if (limpiarInput && resultadoFiltro) {
+      resultadoFiltro.innerHTML = "";
+    }
+    if (limpiarInput && sku) {
+      sku.value = "";
+    }
+    if (limpiarInput && ubicacion) {
+      ubicacion.value = "";
+    }
+    if (limpiarInput && producto) {
+      producto.value = "";
+    }
+    if (limpiarInput && lpn) {
+      lpn.value = "";
+    }
+
+    ubicacionesFiltradas.clear();
+
+    // Seleccionar todas las áreas
+    const container = document.getElementById("filtro-area-container");
+    if (container) {
+      // Marcar todas las casillas de verificación
+      container
+        .querySelectorAll('input[type="checkbox"]')
+        .forEach((checkbox) => {
+          checkbox.checked = true;
+        });
+
+      // Actualizar el estado del checkbox "Seleccionar todas" si existe
+      const checkboxAll = document.getElementById("area-all");
+      if (checkboxAll) {
+        checkboxAll.checked = true;
+        checkboxAll.indeterminate = false;
+      }
+
+      // Actualizar la lista de áreas seleccionadas
+      const todasLasAreas = Array.from(
+        container.querySelectorAll('input[type="checkbox"]:not(#area-all)')
+      ).map((cb) => cb.value);
+      areasSeleccionadas = todasLasAreas;
+    }
+
+    if (areasSeleccionadas && areasSeleccionadas.length > 0) {
+      filtrarPorArea(); // Restaurar solo el filtro de área
+    } else {
+      // Obtener el tipo de mapa activo
+      const tipoMapa =
+        document.getElementById("tipoMapaSelector")?.value || "ocupacion";
+      const svgActivo =
+        tipoMapa === "vencimiento" ? "svg-vencimiento" : "svg-ocupacion";
+
+      // Seleccionar TODOS los elementos gráficos en el SVG activo
+      const elementos = document.querySelectorAll(
+        `#${svgActivo} g[data-ubicacion]`
+      );
+
+      elementos.forEach(function (element) {
+        // Obtener todos los rectángulos dentro del grupo
+        const rects = element.querySelectorAll("rect");
+
+        rects.forEach(function (rect) {
+          // Restaurar color original si existe
+          if (rect.hasAttribute("data-original-fill")) {
+            const originalFill = rect.getAttribute("data-original-fill");
+            rect.setAttribute("fill", originalFill);
+            rect.style.fill = originalFill;
+          }
+
+          // Quitar clases y estilos adicionales
+          rect.classList.remove("ubicacion-filtrada");
+          rect.style.stroke = "";
+          rect.style.strokeWidth = "";
+        });
+      });
+    }
+
+    console.log("Filtro limpiado, mapa restaurado a colores originales");
+  }
+
+  function resaltarUbicaciones() {
+    if (resaltandoUbicaciones) {
+      console.log("Ya hay un proceso de resaltado en curso, abortando");
+      return;
+    }
+
+    resaltandoUbicaciones = true;
+
+    try {
+      // Verificar si hay ubicaciones filtradas
+      console.log(
+        "Ubicaciones a resaltar:",
+        Array.from(ubicacionesFiltradas).length
+      );
+
+      // Buscar todos los elementos que representan ubicaciones en el SVG activo
+      const tipoMapa =
+        document.getElementById("tipoMapaSelector")?.value || "ocupacion";
+      const svgActivo =
+        tipoMapa === "vencimiento" ? "svg-vencimiento" : "svg-ocupacion";
+
+      // Seleccionar elementos dentro del SVG activo
+      const elementos = document.querySelectorAll(
+        `#${svgActivo} g[data-ubicacion]`
+      );
+
+      console.log(`Encontrados ${elementos.length} elementos para procesar`);
+
+      // Crear conjunto de ubicaciones de áreas seleccionadas
+      const ubicacionesDeAreas = new Set();
+
+      if (areasSeleccionadas.length > 0) {
+        areasSeleccionadas.forEach((area) => {
+          const ubicacionesArea = ubicacionesPorArea[area] || new Set();
+          ubicacionesArea.forEach((ubicacion) => {
+            ubicacionesDeAreas.add(ubicacion);
+          });
+        });
+      }
+
+      // Limitar el número de logs para evitar sobrecarga
+      let logCounter = 0;
+      const maxLogs = 5;
+
+      elementos.forEach(function (element) {
+        const id = element.getAttribute("data-ubicacion");
+
+        // Selecciona TODOS los rectángulos dentro del grupo
+        const rects = element.querySelectorAll("rect");
+
+        // Solo log para los primeros elementos
+        if (logCounter < maxLogs) {
+          logCounter++;
+          // console.log(`Procesando ubicación: ${id} con ${rects.length} rectángulos`);
+        }
+
+        // Guardar color original
+        rects.forEach(function (rect) {
+          if (!rect.hasAttribute("data-original-fill")) {
+            const currentFill =
+              rect.getAttribute("fill") || rect.style.fill || "#EEEEEE";
+            rect.setAttribute("data-original-fill", currentFill);
+          }
+
+          // Determinar si este elemento debe resaltarse
+          let debeResaltarse = false;
+          let debeAtenuarse = false;
+
+          // Si hay filtro por SKU pero no por área
+          if (
+            ubicacionesFiltradas.size > 0 &&
+            areasSeleccionadas.length === 0
+          ) {
+            debeResaltarse = ubicacionesFiltradas.has(id);
+            debeAtenuarse = !debeResaltarse;
+          }
+          // Si hay filtro por área pero no por SKU
+          else if (
+            areasSeleccionadas.length > 0 &&
+            ubicacionesFiltradas.size === 0
+          ) {
+            debeResaltarse = ubicacionesDeAreas.has(id);
+            debeAtenuarse = !debeResaltarse;
+          }
+          // Si hay ambos filtros
+          else if (
+            areasSeleccionadas.length > 0 &&
+            ubicacionesFiltradas.size > 0
+          ) {
+            debeResaltarse =
+              ubicacionesFiltradas.has(id) && ubicacionesDeAreas.has(id);
+            debeAtenuarse = !debeResaltarse;
+          }
+
+          // Aplicar estilos según resultado
+          if (debeResaltarse) {
+            // Elemento resaltado (cumple todos los filtros)
+            rect.style.fill = "#0066cc";
+            rect.style.stroke = "#0066cc";
+            rect.style.strokeWidth = "3px";
+          } else if (debeAtenuarse) {
+            // Elemento atenuado (no cumple algún filtro)
+            rect.style.fill = "#CCCCCC";
+            rect.style.stroke = "#999999";
+            rect.style.strokeWidth = "1px";
+          } else {
+            // Sin filtro o cumple filtro de área pero no de SKU
+            const originalFill = rect.getAttribute("data-original-fill");
+            rect.style.fill = originalFill;
+            rect.style.stroke = "";
+            rect.style.strokeWidth = "";
+          }
+        });
+      });
+    } finally {
+      resaltandoUbicaciones = false;
+    }
+  }
+
+  /*** FUNCIONES DE DETALLE DE UBICACIÓN ***/
+  /**
+   * Extrae el número de nivel de una ubicación
+   */
+  function extraerNumeroNivel(ubicacionCompleta) {
+    const partes = ubicacionCompleta.split("-");
+    if (partes.length >= 3) {
+      return partes[2]; // El tercer número es el nivel
+    }
+    return "";
+  }
+
+  /**
+   * Muestra el detalle de una ubicación al hacer clic
+   */
+  function showUbicacionDetalle(e) {
+    e.stopPropagation(); // Evitar propagación del clic
+
+    // Encontrar el elemento con data-ubicacion
+    let targetElement = getTargetElement(e);
+    if (!targetElement) return;
+
+    // Obtener información de la ubicación
+    const ubicacionId = targetElement.getAttribute("data-ubicacion");
+    const capacidad = targetElement.getAttribute("data-capacidad") || "0";
+    const utilizado = targetElement.getAttribute("data-utilizado") || "0";
+    const porcentaje = targetElement.getAttribute("data-porcentaje") || "0";
+
+    // Obtener información de niveles
+    const infoNiveles = getInfoNiveles(targetElement);
+
+    // Construir el contenido HTML para el detalle
+    const html = generarHTMLDetalleUbicacion(
+      ubicacionId,
+      capacidad,
+      utilizado,
+      porcentaje,
+      infoNiveles
+    );
+
+    // Mostrar el modal con la información
+    const detalleContainer = document.getElementById("ubicacion-detalle");
+    if (!detalleContainer) {
+      console.error("Elemento ubicacion-detalle no encontrado");
+      return;
+    }
+
+    detalleContainer.innerHTML = html;
+
+    const modal = document.getElementById("ubicacion-modal");
+    if (!modal) {
+      console.error("Elemento ubicacion-modal no encontrado");
+      return;
+    }
+
+    modal.style.display = "flex";
+  }
+
+  /**
+   * Obtiene información de niveles desde el atributo data
+   */
+  function getInfoNiveles(elemento) {
+    const infoNivelesStr = elemento.getAttribute("data-info-niveles");
+    if (!infoNivelesStr) return {};
+
+    try {
+      return JSON.parse(infoNivelesStr.replace(/&quot;/g, '"'));
+    } catch (error) {
+      console.error("Error al parsear data-info-niveles:", error);
+      return {};
+    }
+  }
+
+  /**
+   * Genera el HTML para mostrar el detalle de una ubicación
+   */
+  function generarHTMLDetalleUbicacion(
+    ubicacionId,
+    capacidad,
+    utilizado,
+    porcentaje,
+    infoNiveles
+  ) {
+    console.log(infoNiveles);
+    let html = `
+        <div class="ubicacion-detalle-header">
+          <h2>Detalle de Ubicación: ${ubicacionId}</h2>
+          <div class="ubicacion-ocupacion">
+            <span>Capacidad: ${capacidad} | Utilizado: ${utilizado} | Ocupación: ${porcentaje}%</span>
+          </div>
+        </div>
+      `;
+
+    if (Object.keys(infoNiveles).length > 0) {
+      // Mostrar detalle por nivel
+      html += generarHTMLNiveles(infoNiveles, utilizado, capacidad);
+    } else {
+      // Mostrar productos por ubicación desde datos globales
+      html += generarHTMLProductosEnUbicacion(ubicacionId);
+    }
+
+    return html;
+  }
+
+  /**
+   * Genera HTML para mostrar información de niveles
+   */
+  function generarHTMLNiveles(infoNiveles, utilizado, capacidad) {
+    // Primero verificamos si hay SKUs con múltiples LPNs
+    let hayMultiplesLpns = true;
+    const nivelesOrdenados = Object.keys(infoNiveles).sort();
+
+    // Recorrer todos los niveles y SKUs primero para detectar múltiples LPNs
+    nivelesOrdenados.forEach(function (nivel) {
+      const nivelInfo = infoNiveles[nivel];
+      if (nivelInfo && nivelInfo.skus && typeof nivelInfo.skus === "object") {
+        // Revisar cada SKU en este nivel
+        Object.keys(nivelInfo.skus).forEach(function (codigoSku) {
+          const infoSku = nivelInfo.skus[codigoSku];
+          if (infoSku && infoSku.lpns && infoSku.lpns.length > 1) {
+            hayMultiplesLpns = false;
+          }
+        });
+      }
+    });
+
+    // Agregar columna para mostrar vida útil si estamos en modo vencimiento
+    const esModoVencimiento =
+      document.getElementById("tipoMapaSelector")?.value === "vencimiento";
+
+    let html = `
+        <h3>Detalle por Nivel</h3>
+        <table class="inventario-lista">
+          <thead>
+            <tr>
+              <th>Nivel</th>
+              <th>SKU</th>
+              <th>Descripción</th>
+              <th>Pallets</th>
+              <th>Cajas</th>
+              ${hayMultiplesLpns ? `<th>LPN</th>` : ""}
+              <th>Vida Útil</th>
+              <th>Fecha Vencimiento</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+
+    // Recorrer los niveles para generar las filas
+    nivelesOrdenados.forEach(function (nivel) {
+      const nivelInfo = infoNiveles[nivel];
+
+      // Nueva estructura con SKUs agrupados
+      if (nivelInfo && nivelInfo.skus && typeof nivelInfo.skus === "object") {
+        // Convertir el objeto de SKUs a un array para poder ordenarlo
+        const skusArray = Object.values(nivelInfo.skus);
+
+        // Ordenar SKUs por cantidad de cajas (descendente)
+        skusArray.sort((a, b) => b.cajas - a.cajas);
+
+        skusArray.forEach(function (skuInfo) {
+          if (skuInfo.cajas > 0 || skuInfo.pallets > 0) {
+            // Verificar si este SKU tiene múltiples LPNs
+            const tieneLpns = skuInfo.lpns && skuInfo.lpns.length > 0;
+
+            html += `
+                <tr>
+                  <td>${extraerNumeroNivel(nivel)}</td>
+                  <td>${skuInfo.sku || "-"}</td>
+                  <td>${skuInfo.descripcion || "-"}</td>
+                  <td>${skuInfo.pallets || 0}</td>
+                  <td>${skuInfo.cajas || 0}</td>
+                  ${
+                    hayMultiplesLpns
+                      ? `<td>${tieneLpns ? skuInfo.lpns.join(", ") : "-"}</td>`
+                      : ""
+                  }
+                  <td>${
+                    skuInfo.vida_util_porc ? skuInfo.vida_util_porc + "%" : "-"
+                  }</td>
+                  <td>${skuInfo.fechas ? skuInfo.fechas.join(",") : "-"}</td>
+              `;
+            html += `</tr>`;
+          }
+        });
+      }
+    });
+
+    html += `
+          </tbody>
+        </table>
+        <div class="inventario-total">
+          Total Niveles Ocupados: ${utilizado}/${capacidad}
+        </div>
+      `;
+
+    return html;
+  }
+
+  function formatearFecha(fecha) {
+    if (!fecha) return "-";
+    try {
+      if (typeof fecha === "string") fecha = new Date(fecha);
+      return fecha.toLocaleDateString("es-ES", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+      });
+    } catch (e) {
+      console.error("Error al formatear fecha:", e);
+      return "-";
+    }
+  }
+
+  /**
+   * Genera HTML con información de productos en una ubicación
+   */
+  function generarHTMLProductosEnUbicacion(ubicacionId) {
+    let productosEnUbicacion = [];
+
+    if (window.datosProductos) {
+      // Buscar productos en esta ubicación
+      Object.keys(window.datosProductos).forEach(function (sku) {
+        const producto = window.datosProductos[sku];
+
+        const ubicacionesDelProducto = producto.ubicaciones.filter(function (
+          u
+        ) {
+          return u.ubicacion === ubicacionId;
+        });
+
+        if (ubicacionesDelProducto.length > 0) {
+          // Sumar cantidad total
+          let cantidadTotal = 0;
+          ubicacionesDelProducto.forEach(function (u) {
+            cantidadTotal += u.cantidad;
+          });
+
+          productosEnUbicacion.push({
+            sku: sku,
+            descripcion: producto.descripcion,
+            cantidad: cantidadTotal,
+          });
+        }
+      });
+    }
+
+    // Ordenar por cantidad descendente
+    productosEnUbicacion.sort((a, b) => b.cantidad - a.cantidad);
+
+    if (productosEnUbicacion.length > 0) {
+      let html = `
+          <table class="inventario-lista">
+            <thead>
+              <tr>
+                <th>SKU</th>
+                <th>Descripción</th>
+                <th>Pallets</th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+
+      let totalPallets = 0;
+
+      productosEnUbicacion.forEach(function (producto) {
+        totalPallets += producto.cantidad;
+        html += `
+            <tr>
+              <td>${producto.sku}</td>
+              <td>${producto.descripcion}</td>
+              <td>${producto.cantidad.toFixed(2)}</td>
+            </tr>
+          `;
+      });
+
+      html += `
+            </tbody>
+          </table>
+          <div class="inventario-total">
+            Total Pallets: ${totalPallets.toFixed(2)}
+          </div>
+        `;
+      return html;
+    } else {
+      return `
+          <div class="no-productos">
+            No hay productos registrados en esta ubicación o no hay información detallada disponible.
+          </div>
+        `;
+    }
+  }
+
+  /*** FUNCIONES PARA TABLA DE VENCIMIENTOS ***/
+  /**
+   * Inicializa la tabla de vencimientos
+   */
+  function inicializarTablaVencimientos() {
+    // Configurar vencimientos iniciales
+    mostrarTopVencimientos();
+
+    // Configurar ordenamiento de la tabla
+    configurarOrdenamientoTabla();
+  }
+
+  /**
+   * Muestra los top vencimientos en la tabla
+   */
+  function mostrarTopVencimientos() {
+    const tablaElement = document.getElementById("tabla-vencimientos");
+    if (!tablaElement) return;
+
+    const tabla = tablaElement.getElementsByTagName("tbody")[0];
+    if (!tabla) return;
+
+    // Limpiar tabla
+    tabla.innerHTML = "";
+
+    if (!window.ordenActual) {
+      window.ordenActual = { campo: "cantidad", ascendente: false };
+    }
+
+    // Inicializar ordenActual si no existe
+    window.ordenActual = window.ordenActual || {
+      campo: "cantidad",
+      ascendente: false,
+    };
+
+    // Cargar datos de vencimientos
+    google.script.run
+      .withSuccessHandler(function (result) {
+        procesarYMostrarVencimientos(result, tabla);
+      })
+      .withFailureHandler(function (error) {
+        console.error("Error al obtener datos de vencimientos:", error);
+        mostrarMensajeNoHayDatos(tbody);
+      })
+      .obtenerDatosVencimientos();
+    window.mostrarTopVencimientos = mostrarTopVencimientos;
+  }
+
+  /**
+   * Procesa y muestra los datos de vencimientos en la tabla
+   */
+  function procesarYMostrarVencimientos(result, tabla) {
+    // Si no recibimos datos válidos del servidor
+    if (!result || typeof result !== "object") {
+      // Usar datos existentes si están disponibles
+      if (
+        window.datosVencimientos &&
+        Object.keys(window.datosVencimientos).length > 0
+      ) {
+        console.log("Usando datos de vencimientos existentes para la tabla");
+
+        // Continuar con los datos que ya tenemos
+        if (!window.vencimientosArray) {
+          window.vencimientosArray = convertirVencimientosAArray(
+            window.datosVencimientos
+          );
+        }
+      } else if (
+        window.datosProductos &&
+        Object.keys(window.datosProductos).length > 0
+      ) {
+        console.log(
+          "Usando datos de productos para generar tabla de vencimientos"
+        );
+
+        // Convertir datosProductos a formato de vencimientos si no tenemos datos
+        const vencimientosArray = [];
+
+        for (const sku in window.datosProductos) {
+          const producto = window.datosProductos[sku];
+
+          // Verificar si hay datos de ubicaciones para este SKU
+          if (
+            !producto.ubicaciones ||
+            !Array.isArray(producto.ubicaciones) ||
+            producto.ubicaciones.length === 0
+          ) {
+            continue; // Saltar si no hay ubicaciones
+          }
+
+          // Si el producto tiene fechas de vencimiento registradas
+          if (
+            producto.fechas &&
+            Array.isArray(producto.fechas) &&
+            producto.fechas.length > 0
+          ) {
+            producto.fechas.forEach((fecha) => {
+              // Calcular cantidad (pallets) y cajas
+              let cantidad = producto.ubicaciones.length;
+              let cajas = 0;
+
+              producto.ubicaciones.forEach((ubi) => {
+                cajas += ubi.cajas || 0;
+              });
+
+              // Convertir formato de fecha si es necesario (DD/MM/YYYY a YYYY/MM/DD para ordenamiento)
+              const partesFecha = fecha.split("/");
+              let fechaFormateada = fecha;
+              if (partesFecha.length === 3) {
+                fechaFormateada = `${partesFecha[2]}/${partesFecha[1]}/${partesFecha[0]}`;
+              }
+
+              // Añadir al array de vencimientos con el formato esperado
+              vencimientosArray.push({
+                fecha: fechaFormateada,
+                sku: sku,
+                descripcion: producto.descripcion || "",
+                cantidad: cantidad,
+                cajas: cajas,
+              });
+            });
+          } else {
+            // Si no tiene fechas explícitas, podemos usar una fecha por defecto o ignorarlo
+            console.log(
+              `SKU ${sku} no tiene fechas de vencimiento registradas`
+            );
+          }
+        }
+
+        // Si no se encontraron vencimientos, mostrar mensaje
+        if (vencimientosArray.length === 0) {
+          mostrarMensajeNoHayDatos(tabla);
+          return;
+        }
+
+        window.vencimientosArray = vencimientosArray;
+
+        // Solo generar datos de vencimientos si no existen
+        if (
+          !window.datosVencimientos ||
+          Object.keys(window.datosVencimientos).length === 0
+        ) {
+          window.datosVencimientos = window.extraerVencimientosDeProductos(
+            window.datosProductos
+          );
+        }
+      } else {
+        mostrarMensajeNoHayDatos(tabla);
+        return;
+      }
+    } else {
+      // Si recibimos nuevos datos válidos del servidor
+      console.log("Recibidos datos de vencimientos del servidor");
+
+      // Solo actualizar si no tenemos datos previos o si los datos son diferentes
+      if (
+        !window.datosVencimientos ||
+        Object.keys(window.datosVencimientos).length === 0 ||
+        JSON.stringify(window.datosVencimientos) !== JSON.stringify(result)
+      ) {
+        window.datosVencimientos = result;
+
+        // Regenerar el array de vencimientos
+        window.vencimientosArray = convertirVencimientosAArray(
+          window.datosVencimientos
+        );
+      }
+    }
+
+    // Verificar si hay datos después de todo el procesamiento
+    if (!window.vencimientosArray || window.vencimientosArray.length === 0) {
+      mostrarMensajeNoHayDatos(tabla);
+      return;
+    }
+
+    // Obtener top 20% por cantidad
+    const vencimientosPorCantidad = [...window.vencimientosArray];
+    vencimientosPorCantidad.sort((a, b) => b.cantidad - a.cantidad);
+
+    const cantidadMostrar = Math.max(
+      1,
+      Math.ceil(window.vencimientosArray.length * 0.2)
+    );
+    const topProductos = vencimientosPorCantidad.slice(0, cantidadMostrar);
+
+    // Crear un Set con los identificadores únicos del top 20%
+    const skusTopProductos = new Set(
+      topProductos.map((item) => item.sku + "-" + item.fecha)
+    );
+
+    // Filtrar para quedarnos solo con el top 20%
+    const vencimientosTopProductos = window.vencimientosArray.filter((item) =>
+      skusTopProductos.has(item.sku + "-" + item.fecha)
+    );
+    window.vencimientosTopProductos = vencimientosTopProductos;
+
+    ordenarVencimientos(vencimientosTopProductos);
+
+    // Mostrar en la tabla
+    mostrarVencimientosEnTabla(vencimientosTopProductos, tabla);
+    actualizarBotonesOrdenamiento();
+  }
+
+  /**
+   * Muestra un mensaje cuando no hay datos
+   */
+  function mostrarMensajeNoHayDatos(tabla) {
+    const fila = document.createElement("tr");
+    const celda = document.createElement("td");
+    celda.colSpan = 4;
+    celda.textContent = "No hay datos de vencimientos disponibles";
+    celda.style.textAlign = "center";
+    fila.appendChild(celda);
+    tabla.appendChild(fila);
+  }
+
+  /**
+   * Convierte los datos de vencimientos en un array
+   */
+  function convertirVencimientosAArray(datosVencimientos) {
+    const vencimientosArray = [];
+
+    for (let fecha in datosVencimientos) {
+      const vencimiento = datosVencimientos[fecha];
+      if (vencimiento && vencimiento.resumen) {
+        for (let sku in vencimiento.resumen) {
+          const item = vencimiento.resumen[sku];
+          vencimientosArray.push({
+            fecha: fecha,
+            sku: sku,
+            descripcion: item.descripcion || "",
+            cantidad: item.cantidad || 0,
+            cajas: item.cajas || 0,
+          });
+        }
+      }
+    }
+
+    return vencimientosArray;
+  }
+
+  /**
+   * Ordena el array de vencimientos según criterio actual
+   */
+  function ordenarVencimientos(vencimientosArray) {
+    if (!window.ordenActual) {
+      window.ordenActual = { campo: "cantidad", ascendente: false };
+    }
+
+    vencimientosArray
+      .slice(0, 3)
+      .map((item) => `${item.sku}: ${item.cantidad}`);
+
+    // Crear una copia del array para evitar problemas de referencia
+    const arrayOrdenado = [...vencimientosArray];
+
+    arrayOrdenado.sort((a, b) => {
+      let valorA = a[window.ordenActual.campo];
+      let valorB = b[window.ordenActual.campo];
+
+      // Convertir a números si es cantidad
+      if (
+        window.ordenActual.campo === "cantidad" ||
+        window.ordenActual.campo === "cajas"
+      ) {
+        valorA = Number(valorA);
+        valorB = Number(valorB);
+      }
+
+      // Comparación según tipo
+      let comparacion;
+      if (window.ordenActual.campo === "fecha") {
+        // Formato fecha: YYYY/MM/DD
+        comparacion = new Date(valorA) - new Date(valorB);
+      } else {
+        comparacion = valorA > valorB ? 1 : valorA < valorB ? -1 : 0;
+      }
+
+      // Aplicar dirección
+      return window.ordenActual.ascendente ? comparacion : -comparacion;
+    });
+
+    arrayOrdenado.slice(0, 3).map((item) => `${item.sku}: ${item.cantidad}`);
+
+    // Vaciar el array original y llenarlo con los elementos ordenados
+    vencimientosArray.length = 0;
+    arrayOrdenado.forEach((item) => vencimientosArray.push(item));
+
+    return vencimientosArray;
+  }
+
+  /**
+   * Muestra los vencimientos en la tabla
+   */
+  function mostrarVencimientosEnTabla(vencimientos, tabla) {
+    const fragmento = document.createDocumentFragment();
+
+    // Limpiar la tabla primero
+    tabla.innerHTML = "";
+
+    vencimientos.forEach((item) => {
+      const fila = document.createElement("tr");
+
+      // SKU
+      const celdaSku = document.createElement("td");
+      celdaSku.textContent = item.sku;
+
+      // Descripción
+      const celdaDesc = document.createElement("td");
+      celdaDesc.textContent = item.descripcion;
+
+      // Cantidad
+      const celdaCantidad = document.createElement("td");
+      celdaCantidad.textContent = item.cantidad;
+
+      // Fecha (convertir de YYYY/MM/DD a DD/MM/YYYY)
+      const celdaFecha = document.createElement("td");
+      const partesFecha = item.fecha.split("/");
+      if (partesFecha.length === 3) {
+        celdaFecha.textContent = `${partesFecha[2]}/${partesFecha[1]}/${partesFecha[0]}`;
+      } else {
+        celdaFecha.textContent = item.fecha;
+      }
+
+      // Cantidad
+      const celdaCajas = document.createElement("td");
+      celdaCajas.textContent = item.cajas;
+
+      // Añadir celdas a la fila
+      fila.appendChild(celdaSku);
+      fila.appendChild(celdaDesc);
+      fila.appendChild(celdaCantidad);
+      fila.appendChild(celdaFecha);
+      fila.appendChild(celdaCajas);
+
+      // Añadir fila a la fragmento
+      fragmento.appendChild(fila);
+    });
+
+    // Limpiar tabla existente y agregar todas las filas de una vez
+    tabla.innerHTML = "";
+    tabla.appendChild(fragmento);
+  }
+
+  /**
+   * Configura el ordenamiento de la tabla
+   */
+  function configurarOrdenamientoTabla() {
+    if (!window.ordenActual) {
+      window.ordenActual = { campo: "cantidad", ascendente: false };
+    }
+
+    const botonesOrden = document.querySelectorAll(".btn-ordenar");
+
+    // Primero, eliminar los manejadores de eventos existentes
+    botonesOrden.forEach(function (boton) {
+      // Clonar el botón para eliminar todos los event listeners
+      const nuevoBoton = boton.cloneNode(true);
+      boton.parentNode.replaceChild(nuevoBoton, boton);
+    });
+
+    const botonesFrescos = document.querySelectorAll(".btn-ordenar");
+
+    botonesFrescos.forEach(function (boton) {
+      boton.addEventListener("click", function () {
+        const campo = this.id.replace("ordenar-", "");
+
+        if (window.ordenActual && window.ordenActual.campo === campo) {
+          window.ordenActual.ascendente = !window.ordenActual.ascendente;
+        } else {
+          window.ordenActual = { campo: campo, ascendente: true };
+        }
+
+        // Ordenar los datos existentes sin recargar
+        if (window.vencimientosArray && window.vencimientosArray.length > 0) {
+          ordenarYMostrarVencimientosExistentes();
+          actualizarBotonesOrdenamiento();
+        } else {
+          // Solo si no hay datos cargados, los pedimos
+          mostrarTopVencimientos();
+        }
+      });
+    });
+  }
+
+  function ordenarYMostrarVencimientosExistentes() {
+    if (
+      !window.vencimientosTopProductos ||
+      window.vencimientosTopProductos.length === 0
+    ) {
+      // Si no tenemos datos filtrados, no hacemos nada
+      return;
+    }
+
+    // Ordenar según criterio actual
+    ordenarVencimientos(window.vencimientosTopProductos);
+
+    // Obtener la tabla
+    const tablaElement = document.getElementById("tabla-vencimientos");
+    if (!tablaElement) return;
+
+    const tabla = tablaElement.getElementsByTagName("tbody")[0];
+    if (!tabla) return;
+
+    // Mostrar datos ordenados
+    mostrarVencimientosEnTabla(window.vencimientosTopProductos, tabla);
+  }
+
+  /**
+   * Actualiza la apariencia de los botones de ordenamiento
+   */
+  function actualizarBotonesOrdenamiento() {
+    if (!window.ordenActual) {
+      window.ordenActual = { campo: "cantidad", ascendente: false };
+    }
+
+    const botones = document.querySelectorAll(".btn-ordenar");
+    botones.forEach((btn) => {
+      btn.classList.remove("activo", "asc", "desc");
+      btn.textContent = btn.textContent.replace(" ↑", "").replace(" ↓", "");
+    });
+
+    const botonActual = document.getElementById(
+      "ordenar-" + window.ordenActual.campo
+    );
+    if (botonActual) {
+      botonActual.classList.add("activo");
+      botonActual.textContent += window.ordenActual.ascendente ? " ↑" : " ↓";
+    }
+  }
+
+  /**
+   * Actualiza la visualización del mapa sin recargar la página
+   */
+  function actualizarVisualizacionMapa(tipoMapa) {
+    if (cambioMapaEnProceso) {
+      console.log(
+        "Cambio de mapa ya en proceso, ignorando solicitud adicional"
+      );
+      return;
+    }
+
+    ubicacionesFiltradas.clear();
+    resaltandoUbicaciones = false;
+
+    // Marcar que estamos procesando un cambio
+    cambioMapaEnProceso = true;
+
+    window.evitarActualizacionStats = true;
+
+    if (colorApplicationInProgress) {
+      console.log("Forzando cancelación desde cambio de visualización");
+      if (currentOperation) {
+        currentOperation.cancel = true;
+      }
+      colorApplicationInProgress = false;
+
+      // Ocultar todos los indicadores de carga
+      document.querySelectorAll(".svg-loading").forEach((el) => {
+        el.style.display = "none";
+      });
+    }
+
+    console.log(`Cambiando visualización a mapa de ${tipoMapa}...`);
+
+    const svgOcupacion = document.getElementById("svg-ocupacion");
+    const svgVencimiento = document.getElementById("svg-vencimiento");
+    const leyendaOcupacion = document.getElementById("leyenda-ocupacion");
+    const leyendaVencimiento = document.getElementById("leyenda-vencimiento");
+
+    const loadingIndicator = document.getElementById(`loading-svg-${tipoMapa}`);
+    if (loadingIndicator) loadingIndicator.style.display = "flex";
+
+    if (tipoMapa === "vencimiento") {
+      svgOcupacion.style.display = "none";
+      svgVencimiento.style.display = "block";
+
+      setTimeout(() => {
+        const svgElement = document
+          .getElementById("svg-vencimiento")
+          .querySelector("svg");
+        if (svgElement) {
+          ajustarSVGViewBox(svgElement);
+          console.log("ViewBox ajustado para mapa de vencimiento");
+        }
+      }, 100);
+
+      leyendaOcupacion.style.display = "none";
+      leyendaVencimiento.style.display = "block";
+    } else {
+      svgOcupacion.style.display = "block";
+      svgVencimiento.style.display = "none";
+
+      setTimeout(() => {
+        const svgElement = document
+          .getElementById("svg-ocupacion")
+          .querySelector("svg");
+        if (svgElement) {
+          ajustarSVGViewBox(svgElement);
+          console.log("ViewBox ajustado para mapa de ocupación");
+        }
+      }, 100);
+
+      leyendaOcupacion.style.display = "block";
+      leyendaVencimiento.style.display = "none";
+    }
+
+    if (window.visualizacionTimeout) {
+      clearTimeout(window.visualizacionTimeout);
+    }
+
+    window.visualizacionTimeout = setTimeout(() => {
+      console.log(`Aplicando colores al mapa de ${tipoMapa}...`);
+      // Aplicar colores primero
+      aplicarColoresSVG();
+
+      // Después limpiar el filtro
+      setTimeout(() => {
+        console.log("Limpiando filtro...");
+        limpiarFiltro(true);
+
+        // Finalmente cargar áreas
+        setTimeout(() => {
+          console.log("Cargando áreas disponibles para el nuevo mapa...");
+          cargarAreasDisponibles();
+
+          // Ocultar indicador de carga
+          if (loadingIndicator) loadingIndicator.style.display = "none";
+
+          // Liberar el bloqueo de cambio de mapa
+          cambioMapaEnProceso = false;
+          console.log("Cambio de visualización completado");
+        }, 300);
+      }, 200);
+    }, 100);
+
+    setTimeout(() => {
+      // Liberar el bloqueo solo después de que todas las operaciones hayan terminado
+      cambioMapaEnProceso = false;
+      console.log("Cambio de visualización completado");
+    }, 1000);
+  }
+
+  /**
+   * Carga las áreas disponibles en el selector
+   */
+  function cargarAreasDisponibles() {
+    const container = document.getElementById("filtro-area-container");
+    if (!container) return;
+
+    console.log("Comenzando a cargar áreas disponibles...");
+    window.cargandoAreas = true;
+
+    // Guardar el estado del checkbox "Seleccionar todas" si existe
+    const checkboxAllExistente = container.querySelector("#area-all");
+    const seleccionarTodasChecked = checkboxAllExistente
+      ? checkboxAllExistente.checked
+      : true;
+
+    // Limpiar contenedor existente
+    container.innerHTML = "";
+
+    // Recrear el checkbox "Seleccionar todas" y el separador
+    const checkboxAllContainer = document.createElement("div");
+    checkboxAllContainer.className = "checkbox-item all-checkbox";
+
+    const checkboxAll = document.createElement("input");
+    checkboxAll.type = "checkbox";
+    checkboxAll.id = "area-all";
+    checkboxAll.value = "todas";
+    checkboxAll.checked = seleccionarTodasChecked;
+
+    const labelAll = document.createElement("label");
+    labelAll.htmlFor = "area-all";
+    labelAll.textContent = "Seleccionar todas";
+
+    checkboxAllContainer.appendChild(checkboxAll);
+    checkboxAllContainer.appendChild(labelAll);
+    container.appendChild(checkboxAllContainer);
+
+    // Agregar separador
+    const separator = document.createElement("div");
+    separator.className = "area-separator";
+    container.appendChild(separator);
+
+    // Conjunto para evitar duplicados
+    const areasUnicas = new Set();
+    ubicacionesPorArea = {};
+
+    // Recopilar áreas de todas las ubicaciones
+    const tipoMapa =
+      document.getElementById("tipoMapaSelector")?.value || "ocupacion";
+    const svgActivo =
+      tipoMapa === "vencimiento" ? "svg-vencimiento" : "svg-ocupacion";
+
+    // Añadir un retraso para asegurar que el SVG esté completamente cargado
+    setTimeout(() => {
+      console.log("Buscando áreas en el mapa:", svgActivo);
+
+      // Verificar primero si hay datos de ubicaciones disponibles
+      if (datosUbicaciones && datosUbicaciones[tipoMapa]) {
+        // Usar los datos estructurados para encontrar áreas (más confiable)
+        Object.entries(datosUbicaciones[tipoMapa]).forEach(([id, datos]) => {
+          if (datos.area && datos.area.trim() !== "") {
+            areasUnicas.add(datos.area);
+
+            // Registrar ubicaciones por área
+            if (!ubicacionesPorArea[datos.area]) {
+              ubicacionesPorArea[datos.area] = new Set();
+            }
+            ubicacionesPorArea[datos.area].add(id);
+          }
+        });
+      }
+
+      // Si no encontramos áreas en los datos estructurados, intentar con los elementos del DOM
+      if (areasUnicas.size === 0) {
+        const elementos = document.querySelectorAll(
+          `#${svgActivo} [data-area]`
+        );
+        console.log("Elementos con data-area encontrados:", elementos.length);
+
+        elementos.forEach(function (element) {
+          const area = element.getAttribute("data-area");
+          if (area && area.trim() !== "") {
+            areasUnicas.add(area);
+
+            // Registrar ubicaciones por área
+            const ubicacion = element.getAttribute("data-ubicacion");
+            if (ubicacion) {
+              if (!ubicacionesPorArea[area]) {
+                ubicacionesPorArea[area] = new Set();
+              }
+              ubicacionesPorArea[area].add(ubicacion);
+            }
+          }
+        });
+      }
+
+      // Convertir a array y ordenar
+      const areasArray = Array.from(areasUnicas).sort();
+      console.log("Áreas únicas encontradas:", areasArray);
+
+      // No hay áreas disponibles
+      if (areasArray.length === 0) {
+        container.innerHTML =
+          '<p class="sin-areas">No se encontraron áreas disponibles</p>';
+        window.cargandoAreas = false;
+        return;
+      }
+
+      // Crear checkboxes para cada área
+      areasArray.forEach(function (area) {
+        const checkbox = document.createElement("label");
+        checkbox.className = "area-checkbox";
+
+        // Crear el elemento input
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.value = area;
+        input.name = "area";
+        input.checked = true;
+
+        if (input.checked && !areasSeleccionadas.includes(area)) {
+          areasSeleccionadas.push(area);
+        }
+
+        // Restaurar estado seleccionado si el área estaba seleccionada previamente
+        if (areasSeleccionadas.includes(area)) {
+          input.checked = true;
+        }
+
+        // Añadir el texto
+        const texto = document.createTextNode(area);
+
+        // Añadir elementos al DOM
+        checkbox.appendChild(input);
+        checkbox.appendChild(texto);
+        container.appendChild(checkbox);
+      });
+
+      if (areasSeleccionadas.length === 0) {
+        // Si no hay áreas seleccionadas previamente, seleccionar todas
+        areasSeleccionadas = Array.from(areasUnicas);
+      }
+
+      // Volver a agregar el evento change al checkbox "Seleccionar todas"
+      const nuevoCheckboxAll = document.getElementById("area-all");
+      if (nuevoCheckboxAll) {
+        nuevoCheckboxAll.addEventListener("change", function () {
+          const checkboxes = container.querySelectorAll(
+            'input[type="checkbox"]:not(#area-all)'
+          );
+          checkboxes.forEach((checkbox) => {
+            checkbox.checked = this.checked;
+          });
+          filtrarPorArea();
+        });
+      }
+
+      // Agregar evento change a cada checkbox individual
+      const checkboxes = container.querySelectorAll(
+        'input[type="checkbox"]:not(#area-all)'
+      );
+      checkboxes.forEach((checkbox) => {
+        checkbox.addEventListener("change", function () {
+          actualizarEstadoSeleccionarTodas();
+          filtrarPorArea();
+        });
+      });
+
+      // Actualizar el estado del checkbox "Seleccionar todas"
+      actualizarEstadoSeleccionarTodas();
+
+      window.cargandoAreas = false;
+      if (areasSeleccionadas.length > 0) {
+        filtrarPorArea();
+      }
+    }, 300); // Esperar 300ms para asegurar que el SVG esté procesado
+  }
+
+  function filtrarPorArea() {
+    // Añade una verificación para detectar si ya está en proceso de filtrado
+    if (window.filtrando === true) {
+      console.log("Filtrado ya en proceso, evitando recursión");
+      return;
+    }
+
+    window.filtrando = true;
+
+    try {
+      if (window.cargandoAreas) {
+        console.log("Saltando filtro de área durante carga");
+        return;
+      }
+
+      const container = document.getElementById("filtro-area-container");
+      if (!container) return;
+
+      // Obtener todas las checkboxes seleccionadas
+      const checkboxesSeleccionadas = container.querySelectorAll(
+        'input[type="checkbox"]:checked:not(#area-all)'
+      );
+      areasSeleccionadas = Array.from(checkboxesSeleccionadas).map(
+        (cb) => cb.value
+      );
+
+      console.log("Areas seleccionadas:", areasSeleccionadas);
+
+      // Determinar qué ubicaciones pertenecen a las áreas seleccionadas
+      const ubicacionesDeAreas = new Set();
+
+      // Si hay áreas seleccionadas, unir todas las ubicaciones de esas áreas
+      if (areasSeleccionadas.length > 0) {
+        areasSeleccionadas.forEach((area) => {
+          const ubicacionesArea = ubicacionesPorArea[area] || new Set();
+          ubicacionesArea.forEach((ubicacion) => {
+            ubicacionesDeAreas.add(ubicacion);
+          });
+        });
+      }
+
+      // Considerar filtro SKU
+      const inputSku = document.getElementById("filtro-sku");
+      const sku = inputSku ? inputSku.value.trim().toUpperCase() : "";
+
+      if (sku && window.datosProductos && window.datosProductos[sku]) {
+        // Filtrar ubicaciones para mostrar solo las que tienen el SKU y están en áreas seleccionadas
+        ubicacionesFiltradas.clear();
+        const ubicacionesSku = window.datosProductos[sku].ubicaciones.map(
+          (u) => u.ubicacion
+        );
+        ubicacionesSku.forEach((ubicacion) => {
+          if (ubicacionesDeAreas.has(ubicacion)) {
+            ubicacionesFiltradas.add(ubicacion);
+          }
+        });
+      } else {
+        // Si no hay filtro por SKU, mostrar todas las ubicaciones de las áreas seleccionadas
+        ubicacionesFiltradas.clear();
+      }
+
+      // Resaltar en el mapa - Modificamos esta parte para evitar recursión
+      if (!resaltandoUbicaciones) {
+        resaltarUbicaciones();
+      }
+
+      aplicarFiltroVisualDirecto(Array.from(ubicacionesDeAreas));
+
+      // Filtrar tabla de vencimientos
+      filtrarTablaVencimientos(Array.from(ubicacionesDeAreas));
+
+      // Actualizar el calendario con las ubicaciones filtradas
+      actualizarCalendarioConFiltro(Array.from(ubicacionesDeAreas));
+    } finally {
+      // Siempre asegurarse de restablecer el flag
+      window.filtrando = false;
+    }
+  }
+
+  function aplicarFiltroVisualDirecto(ubicacionesArray) {
+    console.log("Aplicando filtro visual directo");
+
+    const ubicacionesSet = new Set(ubicacionesArray);
+    const tipoMapa =
+      document.getElementById("tipoMapaSelector")?.value || "ocupacion";
+    const svgActivo =
+      tipoMapa === "vencimiento" ? "svg-vencimiento" : "svg-ocupacion";
+
+    const inputSku = document.getElementById("filtro-sku");
+    const sku = inputSku ? inputSku.value.trim().toUpperCase() : "";
+    const hayFiltroSku =
+      sku && window.datosProductos && window.datosProductos[sku];
+
+    const elementos = document.querySelectorAll(
+      `#${svgActivo} g[data-ubicacion]`
+    );
+
+    elementos.forEach(function (element) {
+      const id = element.getAttribute("data-ubicacion");
+      const rects = element.querySelectorAll("rect");
+
+      rects.forEach(function (rect) {
+        // Guardar color original si no existe
+        if (!rect.hasAttribute("data-original-fill")) {
+          const currentFill =
+            rect.getAttribute("fill") || rect.style.fill || "#EEEEEE";
+          rect.setAttribute("data-original-fill", currentFill);
+        }
+
+        let debeResaltarse = ubicacionesSet.has(id);
+
+        if (hayFiltroSku && debeResaltarse) {
+          debeResaltarse = window.datosProductos[sku].ubicaciones.some(
+            (u) => u.ubicacion === id
+          );
+        }
+
+        // Determinar si está en el filtro
+        if (debeResaltarse) {
+          // Si es una ubicación filtrada específicamente por SKU, resaltar
+          if (hayFiltroSku && ubicacionesFiltradas.has(id)) {
+            rect.style.fill = "#0066cc";
+            rect.style.stroke = "#0066cc";
+            rect.style.strokeWidth = "3px";
+          } else {
+            // Mostrar con color normal
+            const originalFill = rect.getAttribute("data-original-fill");
+            rect.style.fill = originalFill;
+            rect.style.stroke = "";
+            rect.style.strokeWidth = "";
+          }
+        } else {
+          // Atenuar
+          rect.style.fill = "#CCCCCC";
+          rect.style.stroke = "#999999";
+          rect.style.strokeWidth = "1px";
+        }
+      });
+    });
+  }
+
+  /**
+   * Limpia el filtro por área
+   */
+  function limpiarFiltroArea() {
+    window.filtrando = true;
+
+    try {
+      areasSeleccionadas = [];
+
+      const container = document.getElementById("filtro-area-container");
+      if (container) {
+        container
+          .querySelectorAll('input[type="checkbox"]')
+          .forEach((checkbox) => {
+            checkbox.checked = false;
+          });
+
+        // Actualizar areasSeleccionadas con todas las áreas
+        areasSeleccionadas = Array.from(
+          container.querySelectorAll('input[type="checkbox"]')
+        ).map((cb) => cb.value);
+      }
+
+      const tipoMapa =
+        document.getElementById("tipoMapaSelector")?.value || "ocupacion";
+      const svgActivo =
+        tipoMapa === "vencimiento" ? "svg-vencimiento" : "svg-ocupacion";
+
+      // Considerar el filtro por SKU si existe
+      const inputSku = document.getElementById("filtro-sku");
+      const sku = inputSku ? inputSku.value.trim().toUpperCase() : "";
+
+      if (sku && window.datosProductos && window.datosProductos[sku]) {
+        // Si hay un SKU filtrado, llamar a filtrarPorSku para actualizar el filtro
+        filtrarPorSku(inputSku);
+      } else {
+        document
+          .querySelectorAll(`#${svgActivo} g[data-ubicacion] rect`)
+          .forEach(function (rect) {
+            // Guardar color original si no se ha guardado aún
+            if (!rect.hasAttribute("data-original-fill")) {
+              const currentFill =
+                rect.getAttribute("fill") || rect.style.fill || "#EEEEEE";
+              rect.setAttribute("data-original-fill", currentFill);
+            }
+
+            // Atenuar todas las ubicaciones (sin áreas seleccionadas)
+            rect.style.fill = "#CCCCCC";
+            rect.style.stroke = "#999999";
+            rect.style.strokeWidth = "1px";
+          });
+
+        // Restaurar tablas y datos directamente
+        mostrarTopVencimientos();
+      }
+    } finally {
+      window.filtrando = false;
+    }
+  }
+
+  /**
+   * Filtra la tabla de vencimientos basado en las ubicaciones seleccionadas
+   * @param {Array} ubicaciones - Array de ubicaciones a mostrar
+   */
+  function filtrarTablaVencimientos(ubicaciones) {
+    // Verificar si tenemos datos para filtrar
+    if (!window.vencimientosArray || window.vencimientosArray.length === 0) {
+      console.log("No hay datos de vencimientos para filtrar");
+      return;
+    }
+
+    // Convertir a Set para búsqueda eficiente
+    const ubicacionesSet = new Set(ubicaciones);
+
+    // Crear una lista de SKUs que están en las ubicaciones filtradas
+    const skusFiltrados = new Set();
+
+    // Si tenemos datosProductos, usarlos para determinar qué SKUs mostrar
+    if (window.datosProductos) {
+      Object.keys(window.datosProductos).forEach((sku) => {
+        const producto = window.datosProductos[sku];
+        if (producto.ubicaciones && Array.isArray(producto.ubicaciones)) {
+          // Verificar si alguna ubicación del producto está en las seleccionadas
+          const tieneUbicacionFiltrada = producto.ubicaciones.some((ubi) =>
+            ubicacionesSet.has(ubi.ubicacion)
+          );
+
+          if (tieneUbicacionFiltrada) {
+            skusFiltrados.add(sku);
+          }
+        }
+      });
+    }
+
+    // Crear array de productos filtrados por ubicación
+    const productosFiltrados = window.vencimientosArray.filter((item) => {
+      // Si el producto tiene ubicaciones explícitas
+      if (window.datosProductos && window.datosProductos[item.sku]) {
+        const ubicacionesProducto =
+          window.datosProductos[item.sku].ubicaciones || [];
+
+        // Verificar si alguna ubicación del producto está en las seleccionadas
+        return ubicacionesProducto.some((ubiObj) =>
+          ubicacionesSet.has(ubiObj.ubicacion)
+        );
+      }
+      return false;
+    });
+
+    // Si no hay resultados después del filtrado
+    if (productosFiltrados.length === 0) {
+      const tablaElement = document.getElementById("tabla-vencimientos");
+      if (!tablaElement) return;
+
+      const tabla = tablaElement.getElementsByTagName("tbody")[0];
+      if (!tabla) return;
+
+      tabla.innerHTML =
+        '<tr><td colspan="5" class="sin-resultados">No hay productos en las áreas seleccionadas</td></tr>';
+      return;
+    }
+
+    // Obtener el top 20% de los productos filtrados (por cantidad)
+    const productosOrdenados = [...productosFiltrados].sort(
+      (a, b) => b.cantidad - a.cantidad
+    );
+    const cantidadMostrar = Math.max(
+      1,
+      Math.ceil(productosFiltrados.length * 0.2)
+    );
+    const topProductosFiltrados = productosOrdenados.slice(0, cantidadMostrar);
+
+    // Guardar para ordenamiento posterior
+    window.vencimientosTopProductos = topProductosFiltrados;
+
+    // Ordenar según criterio actual
+    ordenarVencimientos(window.vencimientosTopProductos);
+
+    // Mostrar en tabla
+    const tablaElement = document.getElementById("tabla-vencimientos");
+    if (!tablaElement) return;
+
+    const tabla = tablaElement.getElementsByTagName("tbody")[0];
+    if (!tabla) return;
+
+    mostrarVencimientosEnTabla(window.vencimientosTopProductos, tabla);
+  }
+
+  function actualizarCalendarioConFiltro(ubicaciones) {
+    console.log("Actualizar Calendario con filtro");
+    // Verificar si tenemos calendario y datos
+    if (!window.calendar || !window.datosVencimientos) {
+      console.log("No hay calendario o datos de vencimientos para filtrar");
+      return;
+    }
+
+    // Agregar un flag para evitar múltiples actualizaciones simultáneas
+    if (window.actualizandoCalendario) {
+      console.log("Ya hay una actualización del calendario en progreso");
+      return;
+    }
+
+    window.actualizandoCalendario = true;
+
+    try {
+      // Preprocesar ubicaciones para considerar prefijos
+      const ubicacionesPrefijos = ubicaciones.map((ubi) =>
+        String(ubi).substring(0, 6)
+      );
+      console.log("Prefijos de ubicaciones a filtrar:", ubicacionesPrefijos);
+
+      if (ubicaciones.length === 0) {
+        console.log("No hay áreas seleccionadas, mostrando 0 eventos");
+
+        window.calendar.removeAllEvents();
+
+        if (typeof window.calendar.render === "function") {
+          window.calendar.render();
+        }
+
+        window.actualizandoCalendario = false;
+        return;
+      }
+
+      if (ubicaciones.length === 1) {
+        console.log("Solo hay un área seleccionada:", ubicaciones[0]);
+        console.log(
+          "Total de eventos en datosVencimientos:",
+          Object.keys(window.datosVencimientos).length
+        );
+      }
+
+      // Crear una copia filtrada de los datos de vencimientos
+      const datosVencimientosParaCalendario = {};
+
+      // Contador para debug
+      let contadorEventosFiltrados = 0;
+
+      // Para cada fecha en datosVencimientos
+      for (const fecha in window.datosVencimientos) {
+        const vencimiento = window.datosVencimientos[fecha];
+
+        if (!vencimiento.detalle) {
+          console.warn(`Fecha ${fecha} no tiene detalle en datosVencimientos`);
+          continue;
+        }
+
+        // Filtrar los detalles que coinciden con los prefijos de ubicación
+        const detallesFiltrados = vencimiento.detalle.filter((item) => {
+          // Si no hay ubicación, saltamos este item
+          if (!item.ubicacion) {
+            console.warn("Item sin ubicación encontrado:", item);
+            return false;
+          }
+
+          // Si es MERMA u otra palabra clave completa
+          if (ubicaciones.includes(item.ubicacion)) {
+            return true;
+          }
+
+          // Preparar prefijos para comparación
+          const itemPrefijo = String(item.ubicacion).substring(0, 6);
+
+          // Comparar prefijos
+          return ubicacionesPrefijos.some((prefijo) => itemPrefijo === prefijo);
+        });
+
+        // console.log(`Fecha ${fecha}: ${detallesFiltrados.length} detalles coinciden con el filtro`);
+
+        // Si hay detalles filtrados, incluir esta fecha
+        if (detallesFiltrados.length > 0) {
+          // Crear resumen filtrado
+          const resumenFiltrado = {};
+
+          detallesFiltrados.forEach((item) => {
+            if (!resumenFiltrado[item.sku]) {
+              resumenFiltrado[item.sku] = {
+                descripcion: item.descripcion || "",
+                cantidad: 0,
+                cajas: 0,
+              };
+            }
+            resumenFiltrado[item.sku].cantidad++;
+          });
+
+          // Guardar fecha filtrada
+          let cantidadTotal = 0;
+          Object.values(resumenFiltrado).forEach((item) => {
+            cantidadTotal += item.cantidad;
+          });
+
+          datosVencimientosParaCalendario[fecha] = {
+            cantidad: cantidadTotal,
+            detalle: detallesFiltrados,
+            resumen: resumenFiltrado,
+          };
+          contadorEventosFiltrados++;
+          // console.log("Detalles Filtrado:", fecha, ": ", detallesFiltrados.length);
+        }
+      }
+
+      console.log(
+        `Calendario filtrado: ${contadorEventosFiltrados} eventos de ${
+          Object.keys(window.datosVencimientos).length
+        } totales`
+      );
+      console.log(
+        "Datos Vencimientos Calendario completos:",
+        datosVencimientosParaCalendario
+      );
+
+      // Protección contra operaciones concurrentes en el calendario
+      if (!window.calendar) {
+        console.warn("El calendario fue destruido durante el filtrado");
+        return;
+      }
+
+      // Verificar si el calendario tiene el método removeAllEvents
+      if (typeof window.calendar.removeAllEvents === "function") {
+        try {
+          // Convertir a eventos para el calendario
+          const eventos = window.convertirVencimientosAEventos(
+            datosVencimientosParaCalendario
+          );
+          console.log("Eventos generados para el calendario:", eventos.length);
+
+          // Actualizar calendario con eventos filtrados
+          window.calendar.removeAllEvents();
+          window.calendar.addEventSource(eventos);
+
+          // Forzar renderizado para asegurar que los cambios se muestren
+          if (typeof window.calendar.render === "function") {
+            window.calendar.render();
+          }
+        } catch (error) {
+          console.error("Error al actualizar eventos del calendario:", error);
+          // No reintentamos para evitar ciclos infinitos
+        }
+      } else {
+        console.warn("El objeto calendario no tiene el método removeAllEvents");
+      }
+    } catch (error) {
+      console.error("Error en actualizarCalendarioConFiltro:", error);
+    } finally {
+      // Asegurar que siempre se libere el flag, incluso si hay errores
+      window.actualizandoCalendario = false;
+    }
+  }
+
+  function cargarDatosUbicaciones() {
+    if (window.colorApplicationInProgress) {
+      console.log("Ya hay una carga de datos en progreso, saltando solicitud");
+      return;
+    }
+
+    window.colorApplicationInProgress = true;
+
+    // Mostrar indicador de carga una sola vez
+    const tipoMapa =
+      document.getElementById("tipoMapaSelector")?.value || "ocupacion";
+    const loadingIndicator = document.getElementById(`loading-svg-${tipoMapa}`);
+    if (loadingIndicator) loadingIndicator.style.display = "flex";
+
+    // Intentar obtener los datos de datosProductos
+    try {
+      window.datosProductos = JSON.parse(
+        document.getElementById("datos-productos").textContent || "{}"
+      );
+      console.log("Datos de productos cargados inicialmente");
+    } catch (e) {
+      console.error("Error al cargar datos de productos:", e);
+      window.datosProductos = {};
+    }
+
+    // Solicitar datos al servidor
+    console.log("Solicitando datos de ubicaciones al servidor...");
+    google.script.run
+      .withSuccessHandler(function (datos) {
+        if (datos && typeof datos === "object") {
+          datosUbicaciones = datos;
+          console.log("Datos de ubicaciones recibidos correctamente");
+
+          // Paso 4: Aplicar colores al SVG después de recibir los datos
+          console.log("Aplicando colores al SVG...");
+          setTimeout(function () {
+            aplicarColoresSVG();
+
+            // Paso 5: Cargar áreas disponibles después de aplicar colores
+            console.log("Colores aplicados. Cargando áreas disponibles...");
+            setTimeout(function () {
+              cargarAreasDisponibles();
+
+              // Paso 6: Aplicar filtro inicial si es necesario
+              console.log("Áreas cargadas. Aplicando filtro inicial...");
+              if (areasSeleccionadas && areasSeleccionadas.length > 0) {
+                filtrarPorArea();
+              }
+
+              // Finalizar proceso de carga
+              window.colorApplicationInProgress = false;
+
+              actualizarDashboardCards();
+
+              console.log("Secuencia de carga completada | Actualizando Cards");
+            }, 500); // Esperar 500ms después de aplicar colores
+          }, 300); // Esperar 300ms antes de aplicar colores
+        } else {
+          console.error("Formato incorrecto de datos de ubicaciones");
+          window.colorApplicationInProgress = false;
+        }
+      })
+      .withFailureHandler(function (error) {
+        console.error("Error al cargar datos de ubicaciones:", error);
+        if (loadingIndicator) loadingIndicator.style.display = "none";
+        window.colorApplicationInProgress = false;
+      })
+      .obtenerDatosUbicaciones();
+  }
+
+  window.extraerVencimientosDeProductos = function (datosProductos) {
+    const vencimientos = {};
+
+    if (!datosProductos) return vencimientos;
+
+    // Recorrer todos los productos
+    Object.keys(datosProductos).forEach((sku) => {
+      const producto = datosProductos[sku];
+
+      // Si tiene fechas registradas
+      if (
+        producto.fechas &&
+        Array.isArray(producto.fechas) &&
+        producto.fechas.length > 0
+      ) {
+        producto.fechas.forEach((fecha) => {
+          // Convertir formato DD/MM/YYYY a YYYY/MM/DD para ordenamiento
+          const partesFecha = fecha.split("/");
+          let fechaFormateada = fecha;
+          if (partesFecha.length === 3) {
+            fechaFormateada = `${partesFecha[2]}/${partesFecha[1]}/${partesFecha[0]}`;
+          }
+
+          // Inicializar estructura para esta fecha si no existe
+          if (!vencimientos[fechaFormateada]) {
+            vencimientos[fechaFormateada] = {
+              cantidad: 0,
+              detalle: [],
+              resumen: {},
+            };
+          }
+
+          // Incrementar contador
+          vencimientos[fechaFormateada].cantidad++;
+
+          // Añadir al resumen
+          if (!vencimientos[fechaFormateada].resumen[sku]) {
+            vencimientos[fechaFormateada].resumen[sku] = {
+              descripcion: producto.descripcion || "",
+              cantidad: 0,
+              cajas: 0,
+            };
+          }
+
+          vencimientos[fechaFormateada].resumen[sku].cantidad++;
+
+          // Añadir detalles de ubicaciones
+          if (producto.ubicaciones && Array.isArray(producto.ubicaciones)) {
+            producto.ubicaciones.forEach((ubicacion) => {
+              vencimientos[fechaFormateada].detalle.push({
+                sku: sku,
+                descripcion: producto.descripcion || "",
+                ubicacion: ubicacion.ubicacion || "",
+                cantidad: ubicacion.cantidad || 0,
+              });
+            });
+          }
+        });
+      }
+    });
+
+    return vencimientos;
+  };
+
+  async function aplicarColoresSVG() {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    if (
+      window.lastColorApplied &&
+      Date.now() - window.lastColorApplied < 1000
+    ) {
+      console.log("Colores aplicados recientemente, saltando operación");
+      return;
+    }
+
+    if (colorApplicationInProgress && currentOperation) {
+      console.log("Cancelando operación previa");
+      if (currentOperation) {
+        currentOperation.cancel = true;
+      }
+
+      // Asegurar que los indicadores de carga previos se oculten
+      document.querySelectorAll(".svg-loading").forEach((el) => {
+        el.style.display = "none";
+      });
+    }
+
+    window.lastColorApplied = Date.now();
+    colorApplicationInProgress = true;
+    const operationId = Date.now();
+    currentOperation = { id: operationId, cancel: false };
+
+    const tipoMapa =
+      document.getElementById("tipoMapaSelector")?.value || "ocupacion";
+
+    const loadingIndicator = document.getElementById(`loading-svg-${tipoMapa}`);
+    if (loadingIndicator) {
+      loadingIndicator.style.display = "flex";
+    }
+
+    if (!datosUbicaciones) {
+      console.error("No hay datos de ubicaciones para aplicar al SVG");
+      if (loadingIndicator) loadingIndicator.style.display = "none";
+      colorApplicationInProgress = false;
+      return;
+    }
+
+    const datosMapa = datosUbicaciones[tipoMapa] || {};
+    const svgContainer = document.getElementById(
+      tipoMapa === "vencimiento" ? "svg-vencimiento" : "svg-ocupacion"
+    );
+
+    if (!svgContainer) {
+      console.error(`Contenedor SVG para ${tipoMapa} no encontrado`);
+      if (loadingIndicator) loadingIndicator.style.display = "none";
+      colorApplicationInProgress = false;
+      return;
+    }
+
+    const entradas = Object.entries(datosMapa);
+    const BATCH_SIZE = 50;
+
+    for (let i = 0; i < entradas.length; i += BATCH_SIZE) {
+      if (currentOperation.cancel || currentOperation.id !== operationId) {
+        console.log("Operación de coloración cancelada");
+        break;
+      }
+
+      const lote = entradas.slice(i, i + BATCH_SIZE);
+      lote.forEach(([id, datos]) => {
+        const elemento =
+          svgContainer.querySelector(`g[data-ubicacion="${id}"]`) ||
+          svgContainer.querySelector(`g[id="${id}"]`);
+        if (!elemento) return;
+
+        elemento.setAttribute("data-area", datos.area || "");
+        elemento.setAttribute("data-capacidad", datos.capacidad_maxima || "0");
+        elemento.setAttribute("data-utilizado", datos.utilizado || "0");
+        elemento.setAttribute("data-porcentaje", datos.porcentaje || "0");
+
+        if (tipoMapa === "vencimiento" && datos.categoriasVidaUtil) {
+          elemento.setAttribute(
+            "data-categorias-vida-util",
+            JSON.stringify(datos.categoriasVidaUtil)
+          );
+        }
+        if (tipoMapa === "vencimiento" && datos.conteoVidaUtil) {
+          elemento.setAttribute(
+            "data-conteo-vida-util",
+            JSON.stringify(datos.conteoVidaUtil)
+          );
+        }
+        if (datos.niveles) {
+          elemento.setAttribute(
+            "data-info-niveles",
+            JSON.stringify(datos.niveles)
+          );
+        }
+
+        const rect = elemento.querySelector("rect");
+        if (rect) {
+          rect.setAttribute("data-original-fill", datos.color || "#CCCCCC");
+          rect.style.fill = datos.color || "#CCCCCC";
+
+          if (tipoMapa === "vencimiento" && datos.multipleVidasUtiles) {
+            rect.style.stroke = "#FFFFFF";
+            rect.style.strokeWidth = "2px";
+            rect.style.strokeDasharray = "3,2";
+          } else {
+            rect.style.stroke = "#333333";
+            rect.style.strokeWidth = "1px";
+            rect.style.strokeDasharray = "none";
+          }
+        }
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    console.log(
+      `Finalizando operación ${operationId}, cancelada: ${currentOperation.cancel}`
+    );
+
+    setTimeout(() => {
+      if (loadingIndicator) {
+        loadingIndicator.style.display = "none";
+      }
+
+      if (currentOperation && currentOperation.id === operationId) {
+        colorApplicationInProgress = false;
+        actualizarDashboardCards();
+        console.log("Actualizando cards desde funcion SVG");
+      }
+    }, 300);
+  }
+</script>
