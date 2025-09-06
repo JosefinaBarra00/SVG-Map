@@ -18,6 +18,7 @@
   "oauthScopes": [
     "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/spreadsheets",
+<<<<<<< HEAD
     "https://www.googleapis.com/auth/script.external_request",
     "https://www.googleapis.com/auth/script.scriptapp",
     "https://www.googleapis.com/auth/script.storage"
@@ -26,4 +27,8 @@
   "executionApi": {
     "access": "DOMAIN"
   }
+=======
+    "https://www.googleapis.com/auth/script.external_request"
+  ]
+>>>>>>> 50c62eb1b443212dff1e0d4c959c6a6b060a1ef9
 }

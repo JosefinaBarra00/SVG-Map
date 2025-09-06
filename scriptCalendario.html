@@ -249,7 +249,12 @@
       // Inicializar calendario
       window.calendar = new FullCalendar.Calendar(calendarEl, {
         height: "100%", // Ajustar altura automáticamente
+<<<<<<< HEAD
         expandRows: true, // Expandir filas para llenar el espacio
+=======
+        aspectRatio: 1.35, // Ajustar proporción para mejor visualización
+        contentHeight: 220,
+>>>>>>> 50c62eb1b443212dff1e0d4c959c6a6b060a1ef9
         headerToolbar: {
           left: "prevYear,prev,next,nextYear",
           center: "title",
@@ -368,6 +373,7 @@
     });
     console.log("FechaFormateada:", fechaFormateada);
 
+<<<<<<< HEAD
     // Generar HTML con nuevo estilo
     let html = `
         <div class="calendar-detail-modal">
@@ -378,6 +384,13 @@
           </div>
           
           <div class="detail-content">
+=======
+    // Generar HTML
+    let html = `
+        <div class="vencimiento-detalle-header">
+          <h2>Productos que vencen el ${fechaFormateada}</h2>
+        </div>
+>>>>>>> 50c62eb1b443212dff1e0d4c959c6a6b060a1ef9
       `;
 
     if (vencimientosFecha.cantidad > 0) {
@@ -392,6 +405,7 @@
       );
     } else {
       html += `
+<<<<<<< HEAD
           <div class="no-detail-data">
             <p>No hay productos que venzan en esta fecha</p>
           </div>
@@ -402,6 +416,13 @@
           </div>
         </div>
       `;
+=======
+          <div class="no-vencimientos">
+            No hay productos que venzan en esta fecha
+          </div>
+        `;
+    }
+>>>>>>> 50c62eb1b443212dff1e0d4c959c6a6b060a1ef9
 
     // Actualizar el contenido del modal
     const detalleContainer = document.getElementById("vencimiento-detalle");
@@ -463,7 +484,11 @@
    */
   function generarTablaVencimientos(productosArray, cantidadTotal) {
     let html = `
+<<<<<<< HEAD
         <table class="detail-table">
+=======
+        <table class="vencimientos-lista">
+>>>>>>> 50c62eb1b443212dff1e0d4c959c6a6b060a1ef9
           <thead>
             <tr>
               <th>SKU</th>
@@ -475,15 +500,20 @@
           <tbody>
       `;
 
+<<<<<<< HEAD
     productosArray.forEach(function (producto, index) {
       const ubicacionesTexto = producto.ubicaciones.length > 1 
         ? `${producto.ubicaciones.length} ubicaciones`
         : producto.ubicaciones[0] || "";
       
+=======
+    productosArray.forEach(function (producto) {
+>>>>>>> 50c62eb1b443212dff1e0d4c959c6a6b060a1ef9
       html += `
           <tr>
             <td>${producto.sku || ""}</td>
             <td>${producto.descripcion || ""}</td>
+<<<<<<< HEAD
             <td>${producto.cantidad.toLocaleString()}</td>
             <td>
               ${ubicacionesTexto}
@@ -498,6 +528,10 @@
                 </div>
               ` : ''}
             </td>
+=======
+            <td>${producto.cantidad}</td>
+            <td>${producto.ubicaciones.join(", ") || ""}</td>
+>>>>>>> 50c62eb1b443212dff1e0d4c959c6a6b060a1ef9
           </tr>
         `;
     });
@@ -505,13 +539,19 @@
     html += `
           </tbody>
         </table>
+<<<<<<< HEAD
         <div class="table-summary">
           Total SKUs: ${productosArray.length} | Total Productos: ${cantidadTotal.toLocaleString()}
+=======
+        <div class="total-vencimientos">
+          Total SKUs: ${productosArray.length} | Total Productos: ${cantidadTotal}
+>>>>>>> 50c62eb1b443212dff1e0d4c959c6a6b060a1ef9
         </div>
       `;
 
     return html;
   }
+<<<<<<< HEAD
 
   // Función global para expandir detalles de ubicaciones
   window.toggleLocationDetails = function(index) {
@@ -530,4 +570,6 @@
       }
     }
   };
+=======
+>>>>>>> 50c62eb1b443212dff1e0d4c959c6a6b060a1ef9
 </script>
