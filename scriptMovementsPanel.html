@@ -1,0 +1,524 @@
+<!-- Panel Overlay for Movements -->
+<div id="movementsPanelOverlay" class="panel-overlay"></div>
+
+<!-- Movements Slide Panel -->
+<div id="movementsPanel" class="slide-panel">
+    <!-- Panel Header -->
+    <div class="panel-header">
+        <h3 class="title-slide-panel">Cargar Archivo de Movimientos</h3>
+        <button id="closeMovementsPanel" class="close-panel" aria-label="Cerrar panel">&times;</button>
+    </div>
+
+    <!-- Panel Content -->
+    <div class="upload-panel-body">
+        <!-- Status Messages -->
+        <div class="panel-section" id="movementsStatusSection" style="display: none;">
+            <div id="movementsStatusMessage" class="result-message"></div>
+        </div>
+
+        <!-- Movement Type Selector -->
+        <div class="panel-section">
+            <label for="tipoMovimientoSelector" class="panel-label">📈 Tipo de Análisis</label>
+            <select id="tipoMovimientoSelector" class="selector-fuente">
+                <option value="ambos">Entradas y Salidas</option>
+                <option value="salidas">Solo Salidas</option>
+                <option value="entradas">Solo Entradas</option>
+            </select>
+        </div>
+
+        <!-- Date Range Section -->
+        <div class="panel-section">
+            <h4>📅 Período de Análisis</h4>
+            <div class="date-range-selector">
+                <div class="input-group">
+                    <label for="fechaInicio">Fecha Inicio:</label>
+                    <input type="date" id="fechaInicio" class="fecha-input" required>
+                </div>
+                <div class="input-group">
+                    <label for="fechaFin">Fecha Fin:</label>
+                    <input type="date" id="fechaFin" class="fecha-input" required>
+                </div>
+                <div class="input-hint">
+                    Define el período para analizar los movimientos
+                </div>
+            </div>
+        </div>
+
+        <!-- Upload Excel Section -->
+        <div class="panel-section">
+            <h4>📁 Subir Archivo de Movimientos</h4>
+            <div class="upload-method file-upload">
+                <div class="upload-area" id="movementsUploadArea">
+                    <div class="upload-placeholder">
+                        <div class="upload-icon">📊</div>
+                        <p>Haz clic aquí o arrastra tu archivo de movimientos</p>
+                        <div style="font-size: 0.9em; color: #adb5bd; margin-top: 5px;">Formatos: .xlsx, .xls, .csv</div>
+                        <button id="selectMovementsButton" class="btn-upload">
+                            Seleccionar Archivo
+                        </button>
+                    </div>
+                    <input type="file" id="movementsFileInput" accept=".xlsx,.xls,.csv" style="display: none">
+                </div>
+            </div>
+        </div>
+
+        <!-- Selected File Display -->
+        <div class="panel-section" id="movementsFileInfoSection" style="display: none;">
+            <h4>✅ Archivo seleccionado</h4>
+            <div class="file-info-container">
+                <div class="file-details">
+                    <div class="file-info">
+                        <strong>Archivo:</strong> <span id="movementsFileName">--</span>
+                    </div>
+                    <div class="file-info">
+                        <strong>Tamaño:</strong> <span id="movementsFileSize">--</span>
+                    </div>
+                </div>
+                <button class="file-remove-btn" onclick="movementsManager.resetPanel()" title="Quitar archivo">&times;</button>
+            </div>
+        </div>
+
+        <!-- Progress Bar -->
+        <div class="panel-section" id="movementsProgressSection" style="display: none;">
+            <h4>⏳ Progreso</h4>
+            <div class="progress-container">
+                <div class="progress-bar">
+                    <div id="movementsProgressFill" style="width: 0%; height: 100%; background: linear-gradient(90deg, #28a745, #20c997); transition: width 0.3s;"></div>
+                </div>
+                <div class="process-status">
+                    <span id="movementsProgressText">Procesando movimientos...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="panel-section">
+            <div class="button-group">
+                <button id="processMovementsButton" class="btn-primary" disabled>
+                    🔄 Procesar Movimientos
+                </button>
+                <button id="cancelMovementsButton" class="btn-secondary" style="display: none;">
+                    ❌ Cancelar
+                </button>
+            </div>
+        </div>
+
+        <!-- Results -->
+        <div class="panel-section" id="movementsResultsSection" style="display: none;">
+            <div id="movementsResult" class="upload-result"></div>
+            <div id="movementsStats" class="stats-container" style="margin-top: 15px;"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+/**
+ * Movements File Upload Manager
+ * Handles movement file uploads and processing
+ */
+class MovementsUploadManager {
+    constructor() {
+        this.selectedFile = null;
+        this.isProcessing = false;
+        this.init();
+    }
+
+    init() {
+        this.setupElements();
+        this.setupEventListeners();
+        this.setDefaultDates();
+    }
+
+    setupElements() {
+        // Panel elements
+        this.movementsPanel = document.getElementById('movementsPanel');
+        this.panelOverlay = document.getElementById('movementsPanelOverlay');
+        this.uploadButton = document.getElementById('uploadMovementsButton');
+        this.closeButton = document.getElementById('closeMovementsPanel');
+
+        // Upload elements
+        this.fileInput = document.getElementById('movementsFileInput');
+        this.selectButton = document.getElementById('selectMovementsButton');
+        this.uploadArea = document.getElementById('movementsUploadArea');
+
+        // Info elements
+        this.fileInfoSection = document.getElementById('movementsFileInfoSection');
+        this.fileName = document.getElementById('movementsFileName');
+        this.fileSize = document.getElementById('movementsFileSize');
+
+        // Date elements
+        this.fechaInicio = document.getElementById('fechaInicio');
+        this.fechaFin = document.getElementById('fechaFin');
+        this.tipoAnalisis = document.getElementById('tipoMovimientoSelector');
+
+        // Progress elements
+        this.progressSection = document.getElementById('movementsProgressSection');
+        this.progressFill = document.getElementById('movementsProgressFill');
+        this.progressText = document.getElementById('movementsProgressText');
+
+        // Control elements
+        this.processButton = document.getElementById('processMovementsButton');
+        this.cancelButton = document.getElementById('cancelMovementsButton');
+
+        // Results
+        this.resultsSection = document.getElementById('movementsResultsSection');
+        this.movementsResult = document.getElementById('movementsResult');
+        this.movementsStats = document.getElementById('movementsStats');
+    }
+
+    setupEventListeners() {
+        // Panel controls
+        if (this.uploadButton) {
+            this.uploadButton.addEventListener('click', () => this.openPanel());
+        }
+
+        if (this.closeButton) {
+            this.closeButton.addEventListener('click', () => this.closePanel());
+        }
+
+        if (this.panelOverlay) {
+            this.panelOverlay.addEventListener('click', () => this.closePanel());
+        }
+
+        // File selection
+        if (this.selectButton && this.fileInput) {
+            this.selectButton.addEventListener('click', () => this.fileInput.click());
+            this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
+        }
+
+        // Processing
+        if (this.processButton) {
+            this.processButton.addEventListener('click', () => this.processFile());
+        }
+
+        if (this.cancelButton) {
+            this.cancelButton.addEventListener('click', () => this.cancelProcessing());
+        }
+
+        // Drag and drop
+        if (this.uploadArea) {
+            this.setupDragAndDrop();
+        }
+
+        // Date validation
+        if (this.fechaInicio && this.fechaFin) {
+            this.fechaInicio.addEventListener('change', () => this.validateDates());
+            this.fechaFin.addEventListener('change', () => this.validateDates());
+        }
+    }
+
+    setupDragAndDrop() {
+        this.uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            this.uploadArea.classList.add('drag-over');
+        });
+
+        this.uploadArea.addEventListener('dragleave', () => {
+            this.uploadArea.classList.remove('drag-over');
+        });
+
+        this.uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            this.uploadArea.classList.remove('drag-over');
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                this.handleFileSelection(files[0]);
+            }
+        });
+    }
+
+    setDefaultDates() {
+        const today = new Date();
+        const lastMonth = new Date(today);
+        lastMonth.setMonth(lastMonth.getMonth() - 1);
+
+        this.fechaInicio.value = lastMonth.toISOString().split('T')[0];
+        this.fechaFin.value = today.toISOString().split('T')[0];
+    }
+
+    validateDates() {
+        const startDate = new Date(this.fechaInicio.value);
+        const endDate = new Date(this.fechaFin.value);
+
+        if (startDate > endDate) {
+            this.showError('La fecha de inicio no puede ser posterior a la fecha de fin');
+            this.processButton.disabled = true;
+            return false;
+        }
+
+        if (this.selectedFile) {
+            this.processButton.disabled = false;
+        }
+        return true;
+    }
+
+    openPanel() {
+        if (this.movementsPanel && this.panelOverlay) {
+            this.movementsPanel.classList.add('active');
+            this.panelOverlay.classList.add('active');
+            document.body.classList.add('panel-open');
+        }
+    }
+
+    closePanel() {
+        if (this.movementsPanel && this.panelOverlay) {
+            this.movementsPanel.classList.remove('active');
+            this.panelOverlay.classList.remove('active');
+            document.body.classList.remove('panel-open');
+            this.resetPanel();
+        }
+    }
+
+    resetPanel() {
+        this.selectedFile = null;
+        this.hideSection(this.fileInfoSection);
+        this.hideSection(this.progressSection);
+        this.hideSection(this.resultsSection);
+        this.processButton.disabled = true;
+        this.isProcessing = false;
+        
+        if (this.fileInput) {
+            this.fileInput.value = '';
+        }
+    }
+
+    handleFileSelect(event) {
+        const file = event.target.files[0];
+        if (file) {
+            this.handleFileSelection(file);
+        }
+    }
+
+    handleFileSelection(file) {
+        if (!this.validateFile(file)) {
+            return;
+        }
+
+        this.selectedFile = file;
+        this.showFileInfo(file);
+        
+        if (this.validateDates()) {
+            this.processButton.disabled = false;
+        }
+    }
+
+    validateFile(file) {
+        const validTypes = [
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.ms-excel',
+            'text/csv',
+            'application/csv'
+        ];
+
+        if (!validTypes.includes(file.type)) {
+            this.showError('Tipo de archivo no válido. Solo se permiten archivos Excel (.xlsx, .xls) o CSV (.csv)');
+            return false;
+        }
+
+        const maxSize = 100 * 1024 * 1024; // 100MB for movements
+        if (file.size > maxSize) {
+            this.showError('El archivo es demasiado grande. Tamaño máximo: 100MB');
+            return false;
+        }
+
+        return true;
+    }
+
+    showFileInfo(file) {
+        this.fileName.textContent = file.name;
+        this.fileSize.textContent = this.formatFileSize(file.size);
+        this.showSection(this.fileInfoSection);
+    }
+
+    formatFileSize(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    async processFile() {
+        if (!this.selectedFile || this.isProcessing || !this.validateDates()) {
+            return;
+        }
+
+        this.isProcessing = true;
+        this.processButton.disabled = true;
+        this.processButton.textContent = 'Procesando...';
+        this.cancelButton.style.display = 'block';
+
+        this.showSection(this.progressSection);
+        this.updateProgress(0, 'Iniciando procesamiento de movimientos...');
+
+        try {
+            const result = await this.processMovementsFile();
+            this.handleProcessingResult(result);
+
+        } catch (error) {
+            console.error('Error processing movements file:', error);
+            this.showError('Error al procesar el archivo: ' + error.message);
+        } finally {
+            this.isProcessing = false;
+            this.processButton.disabled = false;
+            this.processButton.textContent = 'Procesar Movimientos';
+            this.cancelButton.style.display = 'none';
+        }
+    }
+
+    async processMovementsFile() {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            
+            reader.onload = (e) => {
+                const base64data = e.target.result.split(',')[1];
+                
+                this.updateProgress(30, 'Enviando archivo al servidor...');
+                
+                google.script.run
+                    .withSuccessHandler((result) => {
+                        this.updateProgress(100, 'Procesamiento completado');
+                        resolve(result);
+                    })
+                    .withFailureHandler(reject)
+                    .procesarArchivoMovimientos(
+                        base64data,
+                        this.selectedFile.name,
+                        this.fechaInicio.value,
+                        this.fechaFin.value,
+                        this.tipoAnalisis.value
+                    );
+            };
+            
+            reader.onerror = () => reject(new Error('Error reading file'));
+            reader.readAsDataURL(this.selectedFile);
+        });
+    }
+
+    handleProcessingResult(result) {
+        if (result.status === 'success') {
+            this.showSuccess(result.message);
+            
+            // Show statistics
+            if (result.data && result.data.estadisticas) {
+                this.showStatistics(result.data.estadisticas);
+            }
+
+            // Update map if on movements view
+            const tipoMapa = document.getElementById('tipoMapaSelector')?.value;
+            if (tipoMapa === 'movimientos') {
+                setTimeout(() => {
+                    // Usar el helper específico para movimientos
+                    if (window.MovementsHelper) {
+                        window.MovementsHelper.forceUpdateMovementsMap();
+                    } else {
+                        // Fallback si el helper no está disponible
+                        if (window.DataService) {
+                            window.DataService.clearCache();
+                            window.DataService.loadLocationData().then(() => {
+                                if (window.actualizarVisualizacionMapa) {
+                                    window.actualizarVisualizacionMapa('movimientos');
+                                }
+                            });
+                        }
+                    }
+                }, 2000);
+            }
+        } else {
+            this.showError(result.message || 'Error desconocido');
+        }
+    }
+
+    showStatistics(stats) {
+        let html = '<h4>Estadísticas de Movimientos</h4>';
+        html += '<div class="stats-grid">';
+        html += `<div class="stat-item">
+                    <div class="stat-label">Total Ubicaciones</div>
+                    <div class="stat-value">${stats.totalUbicaciones || 0}</div>
+                 </div>`;
+        html += `<div class="stat-item">
+                    <div class="stat-label">Promedio Salidas</div>
+                    <div class="stat-value">${Math.round(stats.promedioSalidas || 0)}</div>
+                 </div>`;
+        html += `<div class="stat-item">
+                    <div class="stat-label">Promedio Entradas</div>
+                    <div class="stat-value">${Math.round(stats.promedioEntradas || 0)}</div>
+                 </div>`;
+        html += '</div>';
+
+        this.movementsStats.innerHTML = html;
+        this.showSection(this.movementsStats);
+    }
+
+    async cancelProcessing() {
+        if (!this.isProcessing) {
+            return;
+        }
+
+        try {
+            await new Promise((resolve, reject) => {
+                google.script.run
+                    .withSuccessHandler(resolve)
+                    .withFailureHandler(reject)
+                    .cancelarProcesamiento();
+            });
+
+            this.updateProgress(0, 'Procesamiento cancelado');
+            this.showError('Procesamiento cancelado por el usuario');
+
+        } catch (error) {
+            console.error('Error canceling processing:', error);
+        }
+    }
+
+    updateProgress(percentage, message) {
+        if (this.progressFill) {
+            this.progressFill.style.width = `${percentage}%`;
+        }
+        
+        if (this.progressText) {
+            this.progressText.textContent = message;
+        }
+    }
+
+    showSuccess(message) {
+        this.showResult(message, 'success');
+    }
+
+    showError(message) {
+        this.showResult(message, 'error');
+    }
+
+    showResult(message, type) {
+        if (this.movementsResult) {
+            this.movementsResult.innerHTML = `
+                <div class="result-message ${type}">
+                    <div class="result-icon">${type === 'success' ? '✅' : '❌'}</div>
+                    <div class="result-text">${message}</div>
+                </div>
+            `;
+        }
+        this.showSection(this.resultsSection);
+    }
+
+    showSection(section) {
+        if (section) {
+            section.style.display = 'block';
+        }
+    }
+
+    hideSection(section) {
+        if (section) {
+            section.style.display = 'none';
+        }
+    }
+}
+
+// Initialize movements manager
+let movementsManager;
+
+document.addEventListener('DOMContentLoaded', function() {
+    movementsManager = new MovementsUploadManager();
+});
+</script>

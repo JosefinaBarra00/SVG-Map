@@ -1,0 +1,252 @@
+<!-- Stats Cards Component - Grid Layout -->
+
+<!-- Utilization Card with Circle -->
+<div class="card utilizado">
+    <div class="percentage-circle">
+        <div class="percentage-text" id="utilizacion-percentage">--</div>
+    </div>
+    <div class="card-label">% Utilizado</div>
+    <div class="card-loading hidden">
+        <div class="card-loader"></div>
+    </div>
+</div>
+
+<!-- Error Locations Card -->
+<div class="card errores">
+    <div class="card-value" id="errores-value">--</div>
+    <div class="card-label">Ubicaciones con Error</div>
+    <div class="card-loading hidden">
+        <div class="card-loader"></div>
+    </div>
+</div>
+
+<!-- Low Pallets Card -->
+<div class="card menos-pallets">
+    <div class="card-value" id="pallets-bajos-value">--</div>
+    <div class="card-label">Ubicaciones con menos de 10 pallets</div>
+    <div class="card-loading hidden">
+        <div class="card-loader"></div>
+    </div>
+</div>
+
+<!-- Retained Pallets Card -->
+<div class="card retenidos">
+    <div class="card-value" id="retenidos-value">--</div>
+    <div class="card-label">Pallets retenidos</div>
+    <div style="font-size: 0.8em; color: #666" id="retenidos-lineas">-- Líneas</div>
+    <div class="card-loading hidden">
+        <div class="card-loader"></div>
+    </div>
+</div>
+
+<script>
+// Variables globales para las estadísticas
+let statsData = {
+    utilizacion: 0,
+    errores: 0,
+    palletsBajos: 0,
+    retenidos: 0,
+    lineasRetenidas: 0
+};
+
+// Función para actualizar las estadísticas
+function actualizarEstadisticas(datos) {
+    if (!datos) return;
+    
+    try {
+        // Actualizar datos
+        statsData = {
+            utilizacion: datos.utilizacion || 0,
+            errores: datos.errores || 0,
+            palletsBajos: datos.palletsBajos || 0,
+            retenidos: datos.retenidos || 0,
+            lineasRetenidas: datos.lineasRetenidas || 0
+        };
+        
+        // Actualizar UI
+        actualizarUIEstadisticas();
+        
+        // Ocultar loaders
+        document.querySelectorAll('.card-loading').forEach(loader => {
+            loader.classList.add('hidden');
+        });
+        
+    } catch (error) {
+        console.error('Error al actualizar estadísticas:', error);
+    }
+}
+
+// Función para actualizar la UI
+function actualizarUIEstadisticas() {
+    // Utilización con círculo de progreso
+    const utilizacionEl = document.getElementById('utilizacion-percentage');
+    if (utilizacionEl) {
+        const porcentaje = Math.round(statsData.utilizacion);
+        utilizacionEl.textContent = `${porcentaje}%`;
+        
+        // Actualizar el círculo de progreso
+        const circle = utilizacionEl.closest('.percentage-circle');
+        if (circle) {
+            const grados = Math.round((porcentaje / 100) * 360);
+            circle.style.background = `conic-gradient(#ff6b35 0deg ${grados}deg, #e9ecef ${grados}deg 360deg)`;
+        }
+    }
+    
+    // Errores
+    const erroresEl = document.getElementById('errores-value');
+    if (erroresEl) {
+        erroresEl.textContent = Utils.formatNumber(statsData.errores);
+    }
+    
+    // Pallets bajos
+    const palletsBajosEl = document.getElementById('pallets-bajos-value');
+    if (palletsBajosEl) {
+        palletsBajosEl.textContent = Utils.formatNumber(statsData.palletsBajos);
+    }
+    
+    // Retenidos
+    const retenidosEl = document.getElementById('retenidos-value');
+    if (retenidosEl) {
+        retenidosEl.textContent = Utils.formatNumber(statsData.retenidos);
+    }
+    
+    // Líneas retenidas
+    const lineasEl = document.getElementById('retenidos-lineas');
+    if (lineasEl) {
+        lineasEl.textContent = `${Utils.formatNumber(statsData.lineasRetenidas)} Líneas`;
+    }
+}
+
+// Función para mostrar loaders
+function mostrarLoadersEstadisticas() {
+    document.querySelectorAll('.card-loading').forEach(loader => {
+        loader.classList.remove('hidden');
+    });
+}
+
+// Función para calcular estadísticas desde datos de inventario
+function calcularEstadisticasDesdeInventario(inventarioData) {
+    if (!inventarioData || !Array.isArray(inventarioData)) {
+        return {
+            utilizacion: 0,
+            errores: 0,
+            palletsBajos: 0,
+            retenidos: 0,
+            lineasRetenidas: 0
+        };
+    }
+    
+    try {
+        let totalUbicaciones = 0;
+        let ubicacionesOcupadas = 0;
+        let errores = 0;
+        let palletsBajos = 0;
+        let retenidos = 0;
+        let lineasRetenidas = 0;
+        
+        inventarioData.forEach(fila => {
+            if (!fila || fila.length < 5) return;
+            
+            totalUbicaciones++;
+            
+            const cantidad = parseFloat(fila[6]) || 0; // Columna cantidad
+            const ubicacion = fila[2] || ''; // Columna ubicación
+            
+            // Ubicaciones ocupadas
+            if (cantidad > 0) {
+                ubicacionesOcupadas++;
+            }
+            
+            // Errores (ubicaciones con datos inconsistentes)
+            if (ubicacion && (isNaN(cantidad) || cantidad < 0)) {
+                errores++;
+            }
+            
+            // Pallets bajos (menos de 10)
+            if (cantidad > 0 && cantidad < 10) {
+                palletsBajos++;
+            }
+            
+            // Retenidos (ejemplo: productos vencidos o con problemas)
+            const diasVencimiento = parseInt(fila[12]) || 0; // Columna días hasta caducidad
+            if (diasVencimiento < 0) {
+                retenidos += cantidad;
+                lineasRetenidas++;
+            }
+        });
+        
+        const utilizacion = totalUbicaciones > 0 ? (ubicacionesOcupadas / totalUbicaciones) * 100 : 0;
+        
+        return {
+            utilizacion,
+            errores,
+            palletsBajos,
+            retenidos,
+            lineasRetenidas
+        };
+        
+    } catch (error) {
+        console.error('Error al calcular estadísticas:', error);
+        return {
+            utilizacion: 0,
+            errores: 0,
+            palletsBajos: 0,
+            retenidos: 0,
+            lineasRetenidas: 0
+        };
+    }
+}
+
+// Función para animar los valores
+function animarValoresEstadisticas() {
+    const duration = 1000; // 1 segundo
+    const steps = 30;
+    const stepDuration = duration / steps;
+    
+    const elements = [
+        { el: document.getElementById('utilizacion-percentage'), target: statsData.utilizacion, suffix: '%' },
+        { el: document.getElementById('errores-value'), target: statsData.errores, suffix: '' },
+        { el: document.getElementById('pallets-bajos-value'), target: statsData.palletsBajos, suffix: '' },
+        { el: document.getElementById('retenidos-value'), target: statsData.retenidos, suffix: '' }
+    ];
+    
+    elements.forEach(({ el, target, suffix }) => {
+        if (!el) return;
+        
+        let current = 0;
+        const increment = target / steps;
+        
+        const interval = setInterval(() => {
+            current += increment;
+            if (current >= target) {
+                current = target;
+                clearInterval(interval);
+            }
+            
+            if (suffix === '%') {
+                el.textContent = `${Math.round(current)}${suffix}`;
+                // Actualizar círculo de progreso
+                const circle = el.closest('.percentage-circle');
+                if (circle) {
+                    const grados = Math.round((current / 100) * 360);
+                    circle.style.background = `conic-gradient(#ff6b35 0deg ${grados}deg, #e9ecef ${grados}deg 360deg)`;
+                }
+            } else {
+                el.textContent = Utils.formatNumber(Math.round(current));
+            }
+        }, stepDuration);
+    });
+}
+
+// Inicialización
+document.addEventListener('DOMContentLoaded', function() {
+    // Mostrar loaders inicialmente
+    mostrarLoadersEstadisticas();
+    
+    // Exponer funciones globalmente
+    window.actualizarEstadisticas = actualizarEstadisticas;
+    window.calcularEstadisticasDesdeInventario = calcularEstadisticasDesdeInventario;
+    window.mostrarLoadersEstadisticas = mostrarLoadersEstadisticas;
+    window.animarValoresEstadisticas = animarValoresEstadisticas;
+});
+</script>

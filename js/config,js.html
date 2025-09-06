@@ -1,0 +1,55 @@
+<script>
+  /**
+   * Configuración global de la aplicación
+   */
+  const AppConfig = {
+    // Configuración de API
+    api: {
+      timeout: 30000,
+      retryAttempts: 3,
+      retryDelay: 1000,
+    },
+
+    // Configuración del mapa
+    map: {
+      defaultZoom: 1,
+      maxZoom: 5,
+      minZoom: 0.5,
+      zoomStep: 0.1,
+      panSpeed: 10,
+    },
+
+    // Configuración de filtros
+    filters: {
+      debounceDelay: 300,
+      minSearchLength: 2,
+      maxResults: 100,
+    },
+
+    // Configuración de visualización
+    display: {
+      tooltipDelay: 200,
+      animationDuration: 300,
+      defaultMapType: "ocupacion",
+    },
+
+    // Colores de vida útil
+    colors: {
+      critico: "#ff0000",
+      bajo: "#ff7700",
+      medio: "#ffff00",
+      alto: "#00ff00",
+    },
+
+    // Umbrales de vida útil
+    thresholds: {
+      critico: 25,
+      bajo: 50,
+      medio: 75,
+      alto: 100,
+    },
+  };
+
+  // Hacer la configuración inmutable
+  Object.freeze(AppConfig);
+</script>

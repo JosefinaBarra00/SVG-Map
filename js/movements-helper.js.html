@@ -1,0 +1,88 @@
+<script>
+/**
+ * Helper específico para manejo de movimientos
+ */
+const MovementsHelper = {
+  /**
+   * Fuerza la actualización del mapa con datos de movimientos
+   */
+  async forceUpdateMovementsMap() {
+    console.log("Forzando actualización del mapa de movimientos...");
+    
+    try {
+      // Limpiar caché de datos
+      if (window.DataService) {
+        window.DataService.clearCache();
+      }
+      
+      // Resetear datos globales
+      window.datosUbicaciones = null;
+      
+      // Recargar datos desde el servidor
+      const datos = await new Promise((resolve, reject) => {
+        google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(reject)
+          .obtenerDatosUbicacionesParaUI();
+      });
+      
+      if (datos) {
+        window.datosUbicaciones = datos;
+        console.log("Datos actualizados para movimientos:", {
+          tieneMovimientos: !!datos.movimientos,
+          cantidadMovimientos: datos.movimientos ? Object.keys(datos.movimientos).length : 0
+        });
+        
+        // Aplicar visualización de movimientos
+        if (window.SVGManager) {
+          window.SVGManager.applyColorsToSVG('movimientos', datos);
+        }
+      }
+      
+    } catch (error) {
+      console.error("Error al actualizar mapa de movimientos:", error);
+    }
+  },
+
+  /**
+   * Verifica si hay datos de movimientos disponibles
+   */
+  hasMovementsData() {
+    return window.datosUbicaciones && 
+           window.datosUbicaciones.movimientos && 
+           Object.keys(window.datosUbicaciones.movimientos).length > 0;
+  },
+
+  /**
+   * Obtiene estadísticas de movimientos
+   */
+  getMovementsStats() {
+    if (!this.hasMovementsData()) {
+      return null;
+    }
+    
+    const movimientos = window.datosUbicaciones.movimientos;
+    const ubicaciones = Object.keys(movimientos);
+    
+    let totalSalidas = 0;
+    let totalEntradas = 0;
+    
+    ubicaciones.forEach(ubicacion => {
+      const datos = movimientos[ubicacion];
+      totalSalidas += datos.salidas || 0;
+      totalEntradas += datos.entradas || 0;
+    });
+    
+    return {
+      totalUbicaciones: ubicaciones.length,
+      totalSalidas,
+      totalEntradas,
+      promedioSalidas: totalSalidas / ubicaciones.length,
+      promedioEntradas: totalEntradas / ubicaciones.length
+    };
+  }
+};
+
+// Exportar para uso global
+window.MovementsHelper = MovementsHelper;
+</script>

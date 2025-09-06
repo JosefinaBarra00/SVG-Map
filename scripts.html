@@ -1,0 +1,340 @@
+<script>
+/**
+ * Scripts principales - Funciones específicas no modularizadas
+ */
+
+// Variables globales
+let datosUbicaciones = null;
+let datosVencimientos = null;
+let colorApplicationInProgress = false;
+
+/**
+ * Configuración de filtrado
+ */
+function configurarFiltrado() {
+  const inputSku = document.getElementById("filtro-sku");
+  const inputUbicacion = document.getElementById("filtro-ubicacion");
+  const btnFiltrar = document.getElementById("btn-filtrar");
+  const btnLimpiar = document.getElementById("btn-limpiar");
+
+  if (inputSku) {
+    inputSku.addEventListener("input", function(e) {
+      const valor = e.target.value.trim();
+      if (valor.length >= 2) {
+        filtrarPorSku(inputSku);
+      } else if (valor.length === 0) {
+        limpiarFiltro(false);
+      }
+    });
+  }
+
+  if (btnFiltrar) {
+    btnFiltrar.addEventListener("click", aplicarTodosFiltros);
+  }
+
+  if (btnLimpiar) {
+    btnLimpiar.addEventListener("click", () => limpiarFiltro(true));
+  }
+}
+
+/**
+ * Carga datos de productos para autocompletado
+ */
+function cargarDatosProductos() {
+  if (!datosUbicaciones || !datosUbicaciones.ocupacion) {
+    console.log("No hay datos de ubicaciones para extraer productos");
+    return;
+  }
+
+  const productosSet = new Set();
+  const datosOcupacion = datosUbicaciones.ocupacion;
+
+  Object.values(datosOcupacion).forEach(ubicacion => {
+    if (ubicacion.productos && Array.isArray(ubicacion.productos)) {
+      ubicacion.productos.forEach(producto => {
+        if (producto.sku) {
+          productosSet.add(producto.sku);
+        }
+        if (producto.articulo) {
+          productosSet.add(producto.articulo);
+        }
+      });
+    }
+  });
+
+  window.productosDisponibles = Array.from(productosSet).sort();
+  console.log(`Cargados ${window.productosDisponibles.length} productos únicos`);
+}
+
+/**
+ * Aplica todos los filtros - DESHABILITADO: Ahora usa FilterManager
+ */
+function aplicarTodosFiltros() {
+  // Sistema legacy deshabilitado - FilterManager maneja los filtros
+  console.log("aplicarTodosFiltros() deshabilitado - usando FilterManager");
+  return;
+}
+
+/**
+ * Filtra datos completos por SKU y ubicación - DESHABILITADO: Ahora usa FilterManager
+ */
+function filtrarDatosCompletos(filtroSku, filtroUbicacion) {
+  // Sistema legacy deshabilitado - FilterManager maneja los filtros
+  console.log("filtrarDatosCompletos() deshabilitado - usando FilterManager");
+  return { ubicaciones: [], productos: [], sinResultados: false };
+}
+
+/**
+ * Filtra ubicaciones por criterios específicos
+ */
+function filtrarUbicacionesPorCriterios(ubicaciones, criterios) {
+  return ubicaciones.filter(ubicacion => {
+    // Filtro por ocupación mínima
+    if (criterios.ocupacionMinima !== undefined) {
+      const ocupacion = ubicacion.porcentajeOcupacion || 0;
+      if (ocupacion < criterios.ocupacionMinima) {
+        return false;
+      }
+    }
+
+    // Filtro por ocupación máxima
+    if (criterios.ocupacionMaxima !== undefined) {
+      const ocupacion = ubicacion.porcentajeOcupacion || 0;
+      if (ocupacion > criterios.ocupacionMaxima) {
+        return false;
+      }
+    }
+
+    // Filtro por área
+    if (criterios.area && criterios.area.length > 0) {
+      const areaUbicacion = ubicacion.area || ubicacion.id.split('-')[0];
+      if (!criterios.area.includes(areaUbicacion)) {
+        return false;
+      }
+    }
+
+    // Filtro por disponibilidad
+    if (criterios.soloDisponibles) {
+      const ocupacion = ubicacion.porcentajeOcupacion || 0;
+      if (ocupacion >= 100) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+}
+
+/**
+ * Muestra resultados del filtro completo - DESHABILITADO: Ahora usa FilterManager
+ */
+function mostrarResultadosFiltroCompleto(resultados) {
+  // Sistema legacy deshabilitado - FilterManager maneja la visualización
+  console.log("mostrarResultadosFiltroCompleto() deshabilitado - usando FilterManager");
+  return;
+}
+
+/**
+ * Filtro por SKU específico
+ */
+function filtrarPorSku(inputElement) {
+  if (!inputElement) return;
+
+  const valorBusqueda = inputElement.value.trim().toLowerCase();
+  
+  if (valorBusqueda.length < 2) {
+    limpiarFiltro(false);
+    return;
+  }
+
+  const resultados = filtrarDatosCompletos(valorBusqueda, "");
+  mostrarResultadosFiltroCompleto(resultados);
+}
+
+/**
+ * Obtiene clase de color para vida útil
+ */
+function getVidaUtilColorClass(vidaUtil) {
+  if (vidaUtil <= 25) return "color-critico";
+  if (vidaUtil <= 50) return "color-bajo";
+  if (vidaUtil <= 75) return "color-medio";
+  return "color-alto";
+}
+
+/**
+ * Limpia filtros
+ */
+function limpiarFiltro(limpiarInput = true) {
+  if (limpiarInput) {
+    const inputSku = document.getElementById("filtro-sku");
+    const inputUbicacion = document.getElementById("filtro-ubicacion");
+    
+    if (inputSku) inputSku.value = "";
+    if (inputUbicacion) inputUbicacion.value = "";
+  }
+
+  const resultadoDiv = document.getElementById("resultado-filtro");
+  if (resultadoDiv) {
+    resultadoDiv.classList.add("hidden");
+  }
+
+  // Limpiar resaltados
+  resaltarUbicaciones([]);
+
+  // Restaurar tabla completa
+  if (window.TableManager) {
+    window.TableManager.reload();
+  }
+
+  console.log("Filtros limpiados");
+}
+
+/**
+ * Resalta ubicaciones en el mapa
+ */
+function resaltarUbicaciones(ubicacionesArray = []) {
+  const svgContainer = document.getElementById("svg-container");
+  if (!svgContainer) return;
+
+  const todosLosElementos = svgContainer.querySelectorAll("rect, g");
+  const ubicacionesSet = new Set(ubicacionesArray);
+
+  todosLosElementos.forEach(elemento => {
+    const id = elemento.getAttribute("id");
+    
+    if (id && (id.includes("-") || id.includes("."))) {
+      elemento.classList.remove("highlighted", "filtered-out");
+      
+      if (ubicacionesArray.length === 0) {
+        // Sin filtro: mostrar todos normalmente
+        elemento.style.opacity = "1";
+      } else if (ubicacionesSet.has(id)) {
+        // Elemento coincide con filtro: resaltar
+        elemento.classList.add("highlighted");
+        elemento.style.opacity = "1";
+      } else {
+        // Elemento no coincide: atenuar
+        elemento.classList.add("filtered-out");
+        elemento.style.opacity = "0.2";
+      }
+    }
+  });
+
+  console.log(`Resaltadas ${ubicacionesArray.length} ubicaciones`);
+}
+
+/**
+ * Formatea fecha
+ */
+function formatearFecha(fecha) {
+  if (!fecha) return "Sin fecha";
+  
+  try {
+    const fechaObj = new Date(fecha);
+    if (isNaN(fechaObj.getTime())) return "Fecha inválida";
+    
+    return fechaObj.toLocaleDateString("es-ES", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    });
+  } catch (error) {
+    return "Error en fecha";
+  }
+}
+
+/**
+ * Genera HTML de productos en ubicación
+ */
+function generarHTMLProductosEnUbicacion(ubicacionId) {
+  if (!datosUbicaciones || !datosUbicaciones.ocupacion) {
+    return '<div class="no-productos">No hay datos de productos</div>';
+  }
+
+  const datosUbicacion = datosUbicaciones.ocupacion[ubicacionId];
+  if (!datosUbicacion || !datosUbicacion.productos) {
+    return '<div class="no-productos">No hay productos en esta ubicación</div>';
+  }
+
+  const productos = datosUbicacion.productos;
+  if (productos.length === 0) {
+    return '<div class="no-productos">Ubicación vacía</div>';
+  }
+
+  return `
+    <div class="productos-grid">
+      ${productos.map(producto => `
+        <div class="producto-item">
+          <div class="producto-header">
+            <strong>${producto.sku || producto.articulo || 'Sin SKU'}</strong>
+          </div>
+          <div class="producto-details">
+            <div class="producto-cantidad">
+              Cantidad: ${Utils.formatNumber(producto.cantidad || 0)}
+            </div>
+            ${producto.descripcion ? `
+              <div class="producto-descripcion" title="${producto.descripcion}">
+                ${producto.descripcion.length > 30 ? 
+                  producto.descripcion.substring(0, 30) + '...' : 
+                  producto.descripcion}
+              </div>
+            ` : ''}
+            ${producto.lote ? `
+              <div class="producto-lote">Lote: ${producto.lote}</div>
+            ` : ''}
+            ${producto.fechaVencimiento ? `
+              <div class="producto-vencimiento">
+                Vence: ${formatearFecha(producto.fechaVencimiento)}
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+// Configuración inicial cuando el DOM esté listo
+document.addEventListener("DOMContentLoaded", function() {
+  // Configurar filtrado
+  configurarFiltrado();
+  
+  // Configurar otros elementos después de un delay
+  setTimeout(() => {
+    if (window.datosUbicaciones) {
+      cargarDatosProductos();
+    }
+  }, 2000);
+});
+
+// Funciones que deben estar disponibles globalmente
+window.configurarFiltrado = configurarFiltrado;
+window.cargarDatosProductos = cargarDatosProductos;
+window.aplicarTodosFiltros = aplicarTodosFiltros;
+window.filtrarDatosCompletos = filtrarDatosCompletos;
+window.filtrarPorSku = filtrarPorSku;
+window.limpiarFiltro = limpiarFiltro;
+window.resaltarUbicaciones = resaltarUbicaciones;
+window.formatearFecha = formatearFecha;
+window.generarHTMLProductosEnUbicacion = generarHTMLProductosEnUbicacion;
+window.getVidaUtilColorClass = getVidaUtilColorClass;
+
+// Función de compatibilidad para cargar datos
+window.cargarDatosUbicaciones = () => {
+  if (window.DataService && window.DataService.loadLocationData) {
+    return window.DataService.loadLocationData();
+  } else {
+    console.error("DataService no disponible");
+  }
+};
+
+// Función de debug para verificar el estado de la aplicación
+window.debugApp = () => {
+  if (window.AppInitializer && window.AppInitializer.checkApplicationHealth) {
+    return window.AppInitializer.checkApplicationHealth();
+  } else {
+    console.error("AppInitializer no disponible");
+    return {};
+  }
+};
+</script>

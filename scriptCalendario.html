@@ -1,0 +1,533 @@
+<script>
+  /**
+   * Calendario de vencimientos - Encargado de mostrar productos por fecha de vencimiento
+   */
+  // Configuración y variables globales
+  window.datosVencimientos = window.datosVencimientos || {};
+  window.mesActual = new Date().getMonth();
+  window.anioActual = new Date().getFullYear();
+  let calendarioInicializado = false;
+
+  // Declarar funciones para evitar errores de referencia
+  window.mostrarDetalleVencimientos =
+    window.mostrarDetalleVencimientos || function () {};
+  window.inicializarCalendario = window.inicializarCalendario || function () {};
+
+  // Inicializar cuando el DOM esté listo
+  document.addEventListener("DOMContentLoaded", function () {
+    if (document.getElementById("vista-calendario")) {
+      inicializarCalendario();
+    }
+  });
+
+  /**
+   * Inicializa el calendario de vencimientos
+   */
+  function inicializarCalendario() {
+    // Configurar eventos para cerrar el modal de vencimientos
+    const vencimientoModal = document.getElementById("vencimiento-modal");
+    const closeVencimientoModal = document.getElementById(
+      "close-vencimiento-modal"
+    );
+
+    if (vencimientoModal && closeVencimientoModal) {
+      // Cerrar al hacer clic en X
+      closeVencimientoModal.addEventListener("click", function () {
+        vencimientoModal.style.display = "none";
+      });
+
+      // Cerrar al hacer clic fuera del contenido
+      window.addEventListener("click", function (event) {
+        if (event.target === vencimientoModal) {
+          vencimientoModal.style.display = "none";
+        }
+      });
+    }
+
+    if (
+      calendarioInicializado &&
+      window.datosVencimientos &&
+      Object.keys(window.datosVencimientos).length > 0
+    ) {
+      console.log(
+        "Calendario ya inicializado con datos válidos, omitiendo nueva carga"
+      );
+      return;
+    }
+
+    // Mostrar indicador de carga
+    mostrarIndicadorCarga(true);
+
+    // Verificar disponibilidad de FullCalendar
+    if (typeof FullCalendar === "undefined") {
+      cargarFullCalendarDinamicamente();
+    } else {
+      // Si ya está cargado, continuar con la carga de datos
+      cargarDatosVencimientos();
+    }
+
+    if (
+      window.datosProductos &&
+      Object.keys(window.datosProductos).length > 0
+    ) {
+      // Extraer datos de vencimientos desde los productos si no existen datos
+      if (
+        !window.datosVencimientos ||
+        Object.keys(window.datosVencimientos).length === 0
+      ) {
+        window.datosVencimientos = window.extraerVencimientosDeProductos(
+          window.datosProductos
+        );
+      }
+    }
+
+    calendarioInicializado = true;
+  }
+
+  /**
+   * Carga la biblioteca FullCalendar dinámicamente si no está disponible
+   */
+  function cargarFullCalendarDinamicamente() {
+    // Usemos una URL más directa y estable para cargar FullCalendar
+    const fullCalendarUrl =
+      "https://cdn.jsdelivr.net/npm/fullcalendar@5.10.1/main.min.js";
+    const fullCalendarCssUrl =
+      "https://cdn.jsdelivr.net/npm/fullcalendar@5.10.1/main.min.css";
+    const fullCalendarLocaleUrl =
+      "https://cdn.jsdelivr.net/npm/fullcalendar@5.10.1/locales/es.js";
+
+    // Cargar CSS
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = fullCalendarCssUrl;
+    document.head.appendChild(link);
+
+    // Verificar si ya está cargado
+    if (typeof FullCalendar !== "undefined") {
+      cargarDatosVencimientos();
+      return;
+    }
+
+    // Cargar script principal
+    const script = document.createElement("script");
+    script.src = fullCalendarUrl;
+
+    script.onload = function () {
+      // Verificar carga
+      if (typeof FullCalendar === "undefined") {
+        console.error(
+          "FullCalendar no se cargó correctamente a pesar de onload"
+        );
+        mostrarError();
+        return;
+      }
+
+      // Cargar locale
+      const localeScript = document.createElement("script");
+      localeScript.src = fullCalendarLocaleUrl;
+      localeScript.onload = function () {
+        setTimeout(function () {
+          cargarDatosVencimientos();
+        }, 300);
+      };
+
+      localeScript.onerror = function () {
+        console.warn(
+          "No se pudo cargar el locale de FullCalendar, continuando sin él"
+        );
+        cargarDatosVencimientos();
+      };
+
+      document.head.appendChild(localeScript);
+    };
+
+    script.onerror = function () {
+      console.error("No se pudo cargar FullCalendar desde:", fullCalendarUrl);
+
+      // Intentar con una CDN alternativa
+      const scriptAlternativo = document.createElement("script");
+      scriptAlternativo.src =
+        "https://cdnjs.cloudflare.com/ajax/libs/fullcalendar/5.10.1/main.min.js";
+
+      scriptAlternativo.onload = function () {
+        cargarDatosVencimientos();
+      };
+
+      scriptAlternativo.onerror = function () {
+        console.error("No se pudo cargar FullCalendar desde ninguna CDN");
+        mostrarError();
+      };
+
+      document.head.appendChild(scriptAlternativo);
+    };
+
+    document.head.appendChild(script);
+  }
+
+  /**
+   * Carga los datos de vencimientos desde el servidor
+   */
+  function cargarDatosVencimientos() {
+    // Referencias a elementos UI
+    const cargaCalendario = document.getElementById("carga-calendario");
+    const errorCalendario = document.getElementById("error-calendario");
+
+    // Mostrar indicador de carga
+    if (cargaCalendario) cargaCalendario.style.display = "block";
+    if (errorCalendario) errorCalendario.style.display = "none";
+
+    // Solicitar datos al servidor
+    google.script.run
+      .withSuccessHandler(function (result) {
+        if (result && typeof result === "object") {
+          // Guardar datos para uso global
+          window.datosVencimientos = result;
+
+          // Ocultar carga
+          if (cargaCalendario) cargaCalendario.style.display = "none";
+
+          // Inicializar calendario con los datos
+          inicializarFullCalendar();
+        } else {
+          console.error("Formato de datos inválido");
+          mostrarError();
+        }
+      })
+      .withFailureHandler(function (error) {
+        console.error("Error al obtener datos de vencimientos:", error);
+        mostrarError();
+      })
+      .obtenerDatosVencimientos();
+  }
+
+  /**
+   * Muestra un error si falla la carga de datos
+   */
+  function mostrarError() {
+    const cargaCalendario = document.getElementById("carga-calendario");
+    const errorCalendario = document.getElementById("error-calendario");
+
+    if (cargaCalendario) cargaCalendario.style.display = "none";
+    if (errorCalendario) errorCalendario.style.display = "block";
+  }
+
+  /**
+   * Muestra u oculta el indicador de carga
+   */
+  function mostrarIndicadorCarga(mostrar) {
+    const cargaCalendario = document.getElementById("carga-calendario");
+    if (cargaCalendario) {
+      cargaCalendario.style.display = mostrar ? "block" : "none";
+    }
+  }
+
+  /**
+   * Inicializa el calendario utilizando la biblioteca FullCalendar
+   */
+  function inicializarFullCalendar() {
+    // Verificar que FullCalendar esté disponible
+    if (typeof FullCalendar === "undefined") {
+      console.error(
+        "FullCalendar aún no está disponible. No se puede inicializar el calendario."
+      );
+      mostrarError();
+      return;
+    }
+
+    const calendarEl = document.getElementById("calendar");
+    if (!calendarEl) {
+      console.error("Elemento calendar no encontrado");
+      return;
+    }
+
+    try {
+      // Convertir datos de vencimientos a formato de eventos
+      const eventos = window.convertirVencimientosAEventos(
+        window.datosVencimientos
+      );
+
+      // Inicializar calendario
+      window.calendar = new FullCalendar.Calendar(calendarEl, {
+        height: "100%", // Ajustar altura automáticamente
+        expandRows: true, // Expandir filas para llenar el espacio
+        headerToolbar: {
+          left: "prevYear,prev,next,nextYear",
+          center: "title",
+          right: "today",
+        },
+        initialView: "dayGridMonth",
+        locale: "es",
+        events: eventos,
+        eventClick: function (info) {
+          const fecha =
+            info.event.extendedProps.fecha ||
+            info.event.start.toISOString().split("T")[0];
+          mostrarDetalleVencimientos(fecha);
+          return false; // Prevenir navegación por defecto
+        },
+        eventContent: function (info) {
+          return {
+            html: `<div style="font-weight: bold; padding: 2px 5px;">${info.event.title}</div>`,
+          };
+        },
+      });
+
+      // Verificar que tenga los métodos esperados
+      if (window.calendar && typeof window.calendar.render === "function") {
+        // Renderizar
+        window.calendar.render();
+        // Añadir listener para redimensionar el calendario cuando cambie el tamaño de la ventana
+        window.addEventListener("resize", function () {
+          if (window.calendar) {
+            window.calendar.updateSize();
+          }
+        });
+      } else {
+        console.error("Objeto calendario no válido:", window.calendar);
+      }
+    } catch (error) {
+      console.error("Error al inicializar el calendario:", error);
+      mostrarError();
+    }
+    mostrarIndicadorCarga(false);
+  }
+
+  /**
+   * Convierte datos de vencimientos al formato requerido por FullCalendar
+   */
+  window.convertirVencimientosAEventos = function (datosVencimientos) {
+    console.log("convertir Vencimientos a Eventos", datosVencimientos);
+    const eventos = [];
+
+    for (const [fecha, vencimientos] of Object.entries(datosVencimientos)) {
+      if (vencimientos && vencimientos.cantidad > 0) {
+        const fechaFormateada = fecha.replace(/\//g, "-");
+        // Verificar que cantidad sea un número
+        const cantidad =
+          typeof vencimientos.cantidad === "number"
+            ? vencimientos.cantidad
+            : parseInt(vencimientos.cantidad) || 0;
+
+        eventos.push({
+          title: `${cantidad}`,
+          start: fechaFormateada,
+          color: determinarColorVencimiento(cantidad),
+          extendedProps: {
+            vencimientos: vencimientos,
+            fecha: fecha,
+          },
+        });
+      }
+    }
+
+    return eventos;
+  };
+
+  /**
+   * Determina el color del evento según la cantidad de vencimientos
+   */
+  function determinarColorVencimiento(cantidad) {
+    if (cantidad > 20) return "#ff5252"; // Rojo - Crítico
+    if (cantidad > 10) return "#ff7043"; // Naranja - Importante
+    return "#ffa726"; // Amarillo - Advertencia
+  }
+
+  /**
+   * Muestra el detalle de vencimientos para una fecha específica
+   */
+  function mostrarDetalleVencimientos(fecha) {
+    if (!window.datosVencimientos) {
+      window.datosVencimientos = {};
+    }
+
+    const vencimientosFecha = window.datosVencimientos[fecha] || {
+      cantidad: 0,
+      detalle: [],
+      resumen: {},
+    };
+    console.log("Vencimientos Fecha:", vencimientosFecha);
+    console.log("Fecha:", fecha);
+
+    if (!vencimientosFecha.resumen) {
+      vencimientosFecha.resumen = {};
+    }
+    if (!vencimientosFecha.detalle) {
+      vencimientosFecha.detalle = [];
+    }
+
+    // Formatear la fecha para mostrar
+    const [anio, mes, dia] = fecha.split("/").map(Number);
+
+    // Crear el objeto Date en hora local
+    const fechaObj = new Date(anio, mes - 1, dia);
+    console.log("FechaObj:", fechaObj);
+    const fechaFormateada = fechaObj.toLocaleDateString("es-ES", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
+    console.log("FechaFormateada:", fechaFormateada);
+
+    // Generar HTML con nuevo estilo
+    let html = `
+        <div class="calendar-detail-modal">
+          <div class="detail-header">
+            <h3>Productos que vencen</h3>
+            <p><strong>Fecha:</strong> ${fechaFormateada}</p>
+            <p><strong>Total Productos:</strong> ${vencimientosFecha.cantidad.toLocaleString()}</p>
+          </div>
+          
+          <div class="detail-content">
+      `;
+
+    if (vencimientosFecha.cantidad > 0) {
+      // Procesar datos
+      const productosArray =
+        procesarDatosProductosVencimiento(vencimientosFecha);
+
+      // Generar tabla
+      html += generarTablaVencimientos(
+        productosArray,
+        vencimientosFecha.cantidad
+      );
+    } else {
+      html += `
+          <div class="no-detail-data">
+            <p>No hay productos que venzan en esta fecha</p>
+          </div>
+        `;
+    }
+    
+    html += `
+          </div>
+        </div>
+      `;
+
+    // Actualizar el contenido del modal
+    const detalleContainer = document.getElementById("vencimiento-detalle");
+    if (detalleContainer) {
+      detalleContainer.innerHTML = html;
+    } else {
+      console.error("Elemento vencimiento-detalle no encontrado");
+    }
+
+    // Mostrar el modal
+    const modal = document.getElementById("vencimiento-modal");
+    if (modal) {
+      modal.style.display = "flex";
+    } else {
+      console.error("Elemento vencimiento-modal no encontrado");
+    }
+  }
+
+  /**
+   * Procesa los datos de productos con vencimiento para mostrarlos
+   */
+  function procesarDatosProductosVencimiento(vencimientosFecha) {
+    const productosArray = [];
+    const ubicacionesPorSku = {};
+
+    // Preparar ubicaciones por SKU
+    vencimientosFecha.detalle.forEach(function (item) {
+      const sku = item.sku || "";
+
+      if (!ubicacionesPorSku[sku]) {
+        ubicacionesPorSku[sku] = new Set();
+      }
+
+      if (item.ubicacion) {
+        ubicacionesPorSku[sku].add(item.ubicacion);
+      }
+    });
+
+    // Convertir resumen a array con las ubicaciones
+    for (const sku in vencimientosFecha.resumen) {
+      const producto = vencimientosFecha.resumen[sku];
+
+      productosArray.push({
+        sku: sku,
+        descripcion: producto.descripcion || "",
+        cantidad: producto.cantidad,
+        ubicaciones: Array.from(ubicacionesPorSku[sku] || []),
+      });
+    }
+
+    // Ordenar por cantidad descendente
+    productosArray.sort((a, b) => b.cantidad - a.cantidad);
+
+    return productosArray;
+  }
+
+  /**
+   * Genera el HTML de la tabla de vencimientos
+   */
+  function generarTablaVencimientos(productosArray, cantidadTotal) {
+    let html = `
+        <table class="detail-table">
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Descripción</th>
+              <th>Cantidad</th>
+              <th>Ubicaciones</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+
+    productosArray.forEach(function (producto, index) {
+      const ubicacionesTexto = producto.ubicaciones.length > 1 
+        ? `${producto.ubicaciones.length} ubicaciones`
+        : producto.ubicaciones[0] || "";
+      
+      html += `
+          <tr>
+            <td>${producto.sku || ""}</td>
+            <td>${producto.descripcion || ""}</td>
+            <td>${producto.cantidad.toLocaleString()}</td>
+            <td>
+              ${ubicacionesTexto}
+              ${producto.ubicaciones.length > 1 ? `
+                <button class="btn-expand-locations" onclick="toggleLocationDetails(${index})" title="Ver detalles">
+                  📋
+                </button>
+                <div id="location-details-${index}" class="location-details" style="display: none;">
+                  <div class="location-list">
+                    ${producto.ubicaciones.map(ub => `<span class="location-item">${ub}</span>`).join('')}
+                  </div>
+                </div>
+              ` : ''}
+            </td>
+          </tr>
+        `;
+    });
+
+    html += `
+          </tbody>
+        </table>
+        <div class="table-summary">
+          Total SKUs: ${productosArray.length} | Total Productos: ${cantidadTotal.toLocaleString()}
+        </div>
+      `;
+
+    return html;
+  }
+
+  // Función global para expandir detalles de ubicaciones
+  window.toggleLocationDetails = function(index) {
+    const detailsElement = document.getElementById(`location-details-${index}`);
+    const button = event.target;
+    
+    if (detailsElement) {
+      if (detailsElement.style.display === 'none') {
+        detailsElement.style.display = 'block';
+        button.textContent = '📁';
+        button.title = 'Ocultar detalles';
+      } else {
+        detailsElement.style.display = 'none';
+        button.textContent = '📋';
+        button.title = 'Ver detalles';
+      }
+    }
+  };
+</script>

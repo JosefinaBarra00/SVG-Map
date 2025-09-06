@@ -1,0 +1,687 @@
+<!-- Panel Overlay -->
+<div id="panelOverlay" class="panel-overlay"></div>
+
+<!-- Slide Panel -->
+<div id="uploadPanel" class="slide-panel">
+    <!-- Panel Header -->
+    <div class="panel-header">
+        <h3 class="title-slide-panel">Cargar Archivo Excel</h3>
+        <button id="closeUploadPanel" class="close-panel" aria-label="Cerrar panel">&times;</button>
+    </div>
+
+    <!-- Panel Content -->
+    <div class="upload-panel-body">
+        <!-- Status Messages -->
+        <div class="panel-section" id="statusMessageSection" style="display: none;">
+            <div id="statusMessage" class="result-message"></div>
+        </div>
+
+        <!-- Data Source Selector -->
+        <div class="panel-section">
+            <label for="fuenteDatosSelector" class="panel-label">📊 Fuente de datos</label>
+            <select id="fuenteDatosSelector" class="selector-fuente">
+                <option value="blueyonder">BlueYonder</option>
+                <option value="wep">WEP</option>
+            </select>
+        </div>
+
+        <!-- Upload Excel Section -->
+        <div class="panel-section">
+            <h4>📁 Subir Archivo Excel</h4>
+            <div class="upload-method file-upload">
+                <div class="upload-area" id="uploadArea">
+                    <div class="upload-placeholder">
+                        <div class="upload-icon">📁</div>
+                        <p>Haz clic aquí o arrastra tu archivo</p>
+                        <div style="font-size: 0.9em; color: #adb5bd; margin-top: 5px;">Formatos: .xlsx, .xls</div>
+                        <button id="selectButton" class="btn-upload">
+                            Seleccionar Archivo
+                        </button>
+                    </div>
+                    <input type="file" id="fileInput" accept=".xlsx,.xls" style="display: none">
+                </div>
+            </div>
+        </div>
+
+        <!-- Drive Files Section -->
+        <div class="panel-section">
+            <h4>💾 Archivos en Drive</h4>
+            <div class="upload-method drive-upload">
+                <div class="drive-selector">
+                    <button id="selectDriveButton" class="btn-secondary">
+                        📂 Seleccionar de Drive
+                    </button>
+                    <div id="driveFiles" class="drive-files-container" style="display: none;">
+                        <!-- Drive files will be populated here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Selected File Display -->
+        <div class="panel-section" id="fileInfoSection" style="display: none;">
+            <h4>✅ Archivo seleccionado</h4>
+            <div class="file-info-container">
+                <div class="file-details">
+                    <div class="file-info">
+                        <strong>Archivo:</strong> <span id="fileName">--</span>
+                    </div>
+                    <div class="file-info">
+                        <strong>Tamaño:</strong> <span id="fileSize">--</span>
+                    </div>
+                </div>
+                <button class="file-remove-btn" onclick="uploadManager.resetPanel()" title="Quitar archivo">&times;</button>
+            </div>
+        </div>
+
+        <!-- Date Selector -->
+        <div class="panel-section" id="dateSection" style="display: none;">
+            <h4>📅 Fecha del Archivo</h4>
+            <div class="date-selector">
+                <div class="input-group">
+                    <label for="fileDate">Fecha:</label>
+                    <input type="date" id="fileDate" class="fecha-input">
+                </div>
+                <div class="input-group">
+                    <label for="fileTime">Hora:</label>
+                    <input type="time" id="fileTime" class="hora-input" value="00:00">
+                </div>
+                <div class="input-hint">
+                    Si no seleccionas fecha, se usará la fecha actual
+                </div>
+            </div>
+        </div>
+
+        <!-- Progress Bar -->
+        <div class="panel-section" id="progressSection" style="display: none;">
+            <h4>⏳ Progreso</h4>
+            <div class="progress-container">
+                <div class="progress-bar">
+                    <div id="progressFill" style="width: 0%; height: 100%; background: linear-gradient(90deg, #28a745, #20c997); transition: width 0.3s;"></div>
+                </div>
+                <div class="process-status">
+                    <span id="progressText">Procesando...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="panel-section">
+            <div class="button-group">
+                <button id="processFileButton" class="btn-primary" disabled>
+                    🔄 Procesar Archivo
+                </button>
+                <button id="cancelProcessButton" class="btn-secondary" style="display: none;">
+                    ❌ Cancelar
+                </button>
+            </div>
+        </div>
+
+        <!-- Results -->
+        <div class="panel-section" id="resultsSection" style="display: none;">
+            <div id="uploadResult" class="upload-result"></div>
+        </div>
+
+        <!-- Historial Section -->
+        <div class="historial-section">
+            <h4>📜 Historial de Archivos</h4>
+            <div class="historial-controls">
+                <button id="refreshHistorialButton" class="btn-secondary">
+                    🔄 Actualizar Lista
+                </button>
+                <button id="clearHistorialButton" class="btn-secondary">
+                    🗑️ Limpiar Temporales
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+/**
+ * File Upload Panel Manager
+ * Handles file uploads, Drive integration, and processing
+ */
+class FileUploadManager {
+    constructor() {
+        this.selectedFile = null;
+        this.driveFiles = [];
+        this.isProcessing = false;
+        this.init();
+    }
+
+    init() {
+        this.setupElements();
+        this.setupEventListeners();
+        this.loadDataSourcePreference();
+    }
+
+    setupElements() {
+        // Panel elements
+        this.uploadPanel = document.getElementById('uploadPanel');
+        this.panelOverlay = document.getElementById('panelOverlay');
+        this.uploadButton = document.getElementById('uploadButton');
+        this.closeButton = document.getElementById('closeUploadPanel');
+
+        // Upload elements
+        this.fileInput = document.getElementById('fileInput');
+        this.selectButton = document.getElementById('selectButton');
+        this.uploadArea = document.getElementById('uploadArea');
+        this.driveButton = document.getElementById('selectDriveButton');
+        this.driveFilesList = document.getElementById('driveFiles');
+
+        // Info elements
+        this.fileInfoSection = document.getElementById('fileInfoSection');
+        this.fileName = document.getElementById('fileName');
+        this.fileSize = document.getElementById('fileSize');
+
+        // Date elements
+        this.dateSection = document.getElementById('dateSection');
+        this.fileDate = document.getElementById('fileDate');
+        this.fileTime = document.getElementById('fileTime');
+
+        // Progress elements
+        this.progressSection = document.getElementById('progressSection');
+        this.progressBar = document.getElementById('progressBar');
+        this.progressFill = document.getElementById('progressFill');
+        this.progressText = document.getElementById('progressText');
+
+        // Control elements
+        this.processButton = document.getElementById('processFileButton');
+        this.cancelButton = document.getElementById('cancelProcessButton');
+        this.dataSourceSelector = document.getElementById('fuenteDatosSelector');
+
+        // Results
+        this.resultsSection = document.getElementById('resultsSection');
+        this.uploadResult = document.getElementById('uploadResult');
+    }
+
+    setupEventListeners() {
+        // Panel controls
+        if (this.uploadButton) {
+            this.uploadButton.addEventListener('click', () => this.openPanel());
+        }
+
+        if (this.closeButton) {
+            this.closeButton.addEventListener('click', () => this.closePanel());
+        }
+
+        if (this.panelOverlay) {
+            this.panelOverlay.addEventListener('click', () => this.closePanel());
+        }
+
+        // File selection
+        if (this.selectButton && this.fileInput) {
+            this.selectButton.addEventListener('click', () => this.fileInput.click());
+            this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
+        }
+
+        // Drive selection
+        if (this.driveButton) {
+            this.driveButton.addEventListener('click', () => this.showDriveFiles());
+        }
+
+        // Processing
+        if (this.processButton) {
+            this.processButton.addEventListener('click', () => this.processFile());
+        }
+
+        if (this.cancelButton) {
+            this.cancelButton.addEventListener('click', () => this.cancelProcessing());
+        }
+
+        // Data source
+        if (this.dataSourceSelector) {
+            this.dataSourceSelector.addEventListener('change', (e) => {
+                this.updateDataSource(e.target.value);
+            });
+        }
+
+        // Drag and drop
+        if (this.uploadArea) {
+            this.setupDragAndDrop();
+        }
+    }
+
+    setupDragAndDrop() {
+        this.uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            this.uploadArea.classList.add('drag-over');
+        });
+
+        this.uploadArea.addEventListener('dragleave', () => {
+            this.uploadArea.classList.remove('drag-over');
+        });
+
+        this.uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            this.uploadArea.classList.remove('drag-over');
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                this.handleFileSelection(files[0]);
+            }
+        });
+    }
+
+    openPanel() {
+        if (this.uploadPanel && this.panelOverlay) {
+            this.uploadPanel.classList.add('active');
+            this.panelOverlay.classList.add('active');
+            document.body.classList.add('panel-open');
+        }
+    }
+
+    closePanel() {
+        if (this.uploadPanel && this.panelOverlay) {
+            this.uploadPanel.classList.remove('active');
+            this.panelOverlay.classList.remove('active');
+            document.body.classList.remove('panel-open');
+            this.resetPanel();
+        }
+    }
+
+    resetPanel() {
+        this.selectedFile = null;
+        this.hideSection(this.fileInfoSection);
+        this.hideSection(this.dateSection);
+        this.hideSection(this.progressSection);
+        this.hideSection(this.resultsSection);
+        this.processButton.disabled = true;
+        this.isProcessing = false;
+        
+        if (this.fileInput) {
+            this.fileInput.value = '';
+        }
+    }
+
+    handleFileSelect(event) {
+        const file = event.target.files[0];
+        if (file) {
+            this.handleFileSelection(file);
+        }
+    }
+
+    handleFileSelection(file) {
+        if (!this.validateFile(file)) {
+            return;
+        }
+
+        this.selectedFile = file;
+        this.showFileInfo(file);
+        this.showSection(this.dateSection);
+        this.processButton.disabled = false;
+    }
+
+    validateFile(file) {
+        const validTypes = [
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.ms-excel'
+        ];
+
+        if (!validTypes.includes(file.type)) {
+            this.showError('Tipo de archivo no válido. Solo se permiten archivos Excel (.xlsx, .xls)');
+            return false;
+        }
+
+        const maxSize = 50 * 1024 * 1024; // 50MB
+        if (file.size > maxSize) {
+            this.showError('El archivo es demasiado grande. Tamaño máximo: 50MB');
+            return false;
+        }
+
+        return true;
+    }
+
+    showFileInfo(file) {
+        this.fileName.textContent = file.name;
+        this.fileSize.textContent = this.formatFileSize(file.size);
+        this.showSection(this.fileInfoSection);
+    }
+
+    formatFileSize(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    async showDriveFiles() {
+        try {
+            this.driveButton.disabled = true;
+            this.driveButton.textContent = 'Cargando...';
+
+            const files = await this.loadDriveFiles();
+            this.displayDriveFiles(files);
+
+        } catch (error) {
+            console.error('Error loading drive files:', error);
+            this.showError('Error al cargar archivos de Drive');
+        } finally {
+            this.driveButton.disabled = false;
+            this.driveButton.textContent = 'Seleccionar de Drive';
+        }
+    }
+
+    async loadDriveFiles() {
+        return new Promise((resolve, reject) => {
+            google.script.run
+                .withSuccessHandler(resolve)
+                .withFailureHandler(reject)
+                .obtenerArchivosExcel();
+        });
+    }
+
+    displayDriveFiles(files) {
+        this.driveFiles = files;
+        this.driveFilesList.innerHTML = '';
+
+        if (files.length === 0) {
+            this.driveFilesList.innerHTML = '<p class="no-files">No se encontraron archivos Excel</p>';
+        } else {
+            files.forEach(file => {
+                const fileElement = this.createDriveFileElement(file);
+                this.driveFilesList.appendChild(fileElement);
+            });
+        }
+
+        this.driveFilesList.style.display = 'block';
+    }
+
+    createDriveFileElement(file) {
+        const div = document.createElement('div');
+        div.className = 'drive-file-item';
+        div.innerHTML = `
+            <div class="file-icon">📄</div>
+            <div class="file-info">
+                <div class="file-name">${file.nombre}</div>
+                <div class="file-date">${new Date(file.fecha).toLocaleDateString()}</div>
+            </div>
+            <button class="btn btn-sm select-drive-file" data-file-id="${file.id}">
+                Seleccionar
+            </button>
+        `;
+
+        const selectButton = div.querySelector('.select-drive-file');
+        selectButton.addEventListener('click', () => {
+            this.selectDriveFile(file);
+        });
+
+        return div;
+    }
+
+    selectDriveFile(file) {
+        this.selectedFile = {
+            id: file.id,
+            name: file.nombre,
+            isDriveFile: true
+        };
+
+        this.showFileInfo({
+            name: file.nombre,
+            size: file.tamaño || 0
+        });
+
+        this.showSection(this.dateSection);
+        this.processButton.disabled = false;
+        this.driveFilesList.style.display = 'none';
+    }
+
+    async processFile() {
+        if (!this.selectedFile || this.isProcessing) {
+            return;
+        }
+
+        this.isProcessing = true;
+        this.processButton.disabled = true;
+        this.processButton.textContent = 'Procesando...';
+        this.cancelButton.style.display = 'block';
+
+        this.showSection(this.progressSection);
+        this.updateProgress(0, 'Iniciando procesamiento...');
+
+        try {
+            let result;
+            
+            if (this.selectedFile.isDriveFile) {
+                result = await this.processDriveFile();
+            } else {
+                result = await this.processUploadedFile();
+            }
+
+            this.handleProcessingResult(result);
+
+        } catch (error) {
+            console.error('Error processing file:', error);
+            this.showError('Error al procesar el archivo: ' + error.message);
+        } finally {
+            this.isProcessing = false;
+            this.processButton.disabled = false;
+            this.processButton.textContent = 'Procesar Archivo';
+            this.cancelButton.style.display = 'none';
+        }
+    }
+
+    async processDriveFile() {
+        const customTimestamp = this.getCustomTimestamp();
+        
+        return new Promise((resolve, reject) => {
+            google.script.run
+                .withSuccessHandler(resolve)
+                .withFailureHandler(reject)
+                .procesarArchivoExcelDrive(this.selectedFile.id, customTimestamp, true);
+        });
+    }
+
+    async processUploadedFile() {
+        const customTimestamp = this.getCustomTimestamp();
+        
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            
+            reader.onload = (e) => {
+                const base64data = e.target.result.split(',')[1];
+                
+                const data = {
+                    base64data: base64data,
+                    fileName: this.selectedFile.name,
+                    useCustomDate: !!customTimestamp,
+                    timestamp: customTimestamp
+                };
+
+                google.script.run
+                    .withSuccessHandler(resolve)
+                    .withFailureHandler(reject)
+                    .procesarArchivoExcelSeguro(data);
+            };
+            
+            reader.onerror = () => reject(new Error('Error reading file'));
+            reader.readAsDataURL(this.selectedFile);
+        });
+    }
+
+    getCustomTimestamp() {
+        if (this.fileDate.value && this.fileTime.value) {
+            const dateTime = new Date(`${this.fileDate.value}T${this.fileTime.value}`);
+            return dateTime.getTime();
+        }
+        return null;
+    }
+
+    handleProcessingResult(result) {
+        if (result.status === 'success') {
+            this.showSuccess(result.message + ' - El dashboard se actualizará automáticamente en unos segundos.');
+            this.updateProgress(100, 'Procesamiento completado');
+            
+            // Trigger data refresh
+            console.log('Programando recarga de datos en 3 segundos...');
+            setTimeout(() => {
+                console.log('Iniciando recarga de datos del dashboard...');
+                
+                // Cargar el SVG base con datos después del procesamiento
+                if (window.cargarSVGBase) {
+                    console.log('Cargando SVG base con datos...');
+                    window.cargarSVGBase(true); // true para cargar datos después
+                } else if (window.cargarDatosUbicaciones) {
+                    console.log('Llamando a cargarDatosUbicaciones...');
+                    window.cargarDatosUbicaciones();
+                } else {
+                    console.error('Funciones de carga no están disponibles');
+                }
+                
+                // También intentar recargar otros componentes
+                if (window.cargarCalendario) {
+                    console.log('Recargando calendario...');
+                    window.cargarCalendario();
+                }
+                
+                if (window.actualizarStats) {
+                    console.log('Actualizando estadísticas...');
+                    window.actualizarStats();
+                }
+                
+                // Después de intentar recargar, mostrar opción manual
+                setTimeout(() => {
+                    const refreshButton = document.createElement('button');
+                    refreshButton.textContent = '🔄 Recargar Dashboard Manualmente';
+                    refreshButton.className = 'btn-secondary';
+                    refreshButton.style.marginTop = '10px';
+                    refreshButton.onclick = () => {
+                        console.log('Recarga manual iniciada...');
+                        window.location.reload();
+                    };
+                    
+                    const resultsSection = document.getElementById('uploadResult');
+                    if (resultsSection && !resultsSection.querySelector('.manual-refresh')) {
+                        refreshButton.classList.add('manual-refresh');
+                        resultsSection.appendChild(refreshButton);
+                    }
+                }, 2000);
+            }, 3000);
+        } else {
+            this.showError(result.message || 'Error desconocido');
+        }
+    }
+
+    async cancelProcessing() {
+        if (!this.isProcessing) {
+            return;
+        }
+
+        try {
+            await new Promise((resolve, reject) => {
+                google.script.run
+                    .withSuccessHandler(resolve)
+                    .withFailureHandler(reject)
+                    .cancelarProcesamiento();
+            });
+
+            this.updateProgress(0, 'Procesamiento cancelado');
+            this.showError('Procesamiento cancelado por el usuario');
+
+        } catch (error) {
+            console.error('Error canceling processing:', error);
+        }
+    }
+
+    updateProgress(percentage, message) {
+        if (this.progressFill) {
+            this.progressFill.style.width = `${percentage}%`;
+        }
+        
+        if (this.progressText) {
+            this.progressText.textContent = message;
+        }
+    }
+
+    showSuccess(message) {
+        this.showResult(message, 'success');
+    }
+
+    showError(message) {
+        this.showResult(message, 'error');
+    }
+
+    showResult(message, type) {
+        // Show in results section
+        if (this.uploadResult) {
+            this.uploadResult.innerHTML = `
+                <div class="result-message ${type}">
+                    <div class="result-icon">${type === 'success' ? '✅' : '❌'}</div>
+                    <div class="result-text">${message}</div>
+                </div>
+            `;
+        }
+        this.showSection(this.resultsSection);
+
+        // Also show in status message section at the top
+        const statusMessageSection = document.getElementById('statusMessageSection');
+        const statusMessage = document.getElementById('statusMessage');
+        if (statusMessage && statusMessageSection) {
+            statusMessage.innerHTML = `
+                <div class="result-icon">${type === 'success' ? '✅' : '❌'}</div>
+                <div class="result-text">${message}</div>
+            `;
+            statusMessage.className = `result-message ${type}`;
+            statusMessageSection.style.display = 'block';
+            
+            // Auto-hide success messages after 5 seconds
+            if (type === 'success') {
+                setTimeout(() => {
+                    if (statusMessageSection) {
+                        statusMessageSection.style.display = 'none';
+                    }
+                }, 5000);
+            }
+        }
+    }
+
+    showSection(section) {
+        if (section) {
+            section.style.display = 'block';
+        }
+    }
+
+    hideSection(section) {
+        if (section) {
+            section.style.display = 'none';
+        }
+    }
+
+    loadDataSourcePreference() {
+        const saved = localStorage.getItem('dataSource');
+        if (saved && this.dataSourceSelector) {
+            this.dataSourceSelector.value = saved;
+        }
+    }
+
+    updateDataSource(source) {
+        localStorage.setItem('dataSource', source);
+        
+        // Update server-side preference
+        google.script.run
+            .withSuccessHandler(() => {
+                console.log('Data source updated:', source);
+            })
+            .withFailureHandler((error) => {
+                console.error('Error updating data source:', error);
+            })
+            .actualizarFuenteDatos(source);
+    }
+}
+
+// Initialize upload manager
+let uploadManager;
+
+document.addEventListener('DOMContentLoaded', function() {
+    uploadManager = new FileUploadManager();
+});
+
+// Export for backward compatibility
+window.setupUploadPanel = function() {
+    if (!uploadManager) {
+        uploadManager = new FileUploadManager();
+    }
+};
+</script>

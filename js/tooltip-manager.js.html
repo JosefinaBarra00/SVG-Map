@@ -1,0 +1,292 @@
+<script>
+  /**
+   * Tooltip Manager - Manejo de tooltips interactivos
+   */
+  const TooltipManager = {
+    tooltip: null,
+    currentHighlighted: null,
+
+    /**
+     * Inicializa el sistema de tooltips
+     */
+    init() {
+      this.tooltip = document.getElementById("tooltip");
+      this.configureTooltips();
+    },
+
+    /**
+     * Muestra tooltip
+     */
+    show(e) {
+      if (!this.tooltip) {
+        console.warn("Tooltip element not found");
+        return;
+      }
+
+      const targetElement = this.getTargetElement(e);
+      if (!targetElement) {
+        return;
+      }
+
+      const id = targetElement.getAttribute("id");
+      if (!id) {
+        return;
+      }
+
+      console.log(`Mostrando tooltip para: ${id}`);
+      this.highlightElement(e);
+
+      // Obtener datos de la ubicación
+      if (window.datosUbicaciones && window.datosUbicaciones.ocupacion) {
+        const datosOcupacion = window.datosUbicaciones.ocupacion[id];
+        const datosVencimiento = window.datosUbicaciones.vencimiento
+          ? window.datosUbicaciones.vencimiento[id]
+          : null;
+
+        let contenido = `<strong>Ubicación:</strong> ${id}<br>`;
+
+        if (datosOcupacion) {
+          const ocupacionInfo = Utils.calculateCorrectOccupancy(id, datosOcupacion);
+          const area = datosOcupacion.area || "Sin área";
+
+          contenido += `<strong>Área:</strong> ${area}<br>`;
+          contenido += `<strong>Ocupación:</strong> ${ocupacionInfo.porcentaje}% (${ocupacionInfo.ocupado}/${ocupacionInfo.total} ${ocupacionInfo.tipo === 'niveles' ? 'niveles' : 'posiciones'})<br>`;
+
+          // Mostrar productos de los niveles
+          if (datosOcupacion.niveles) {
+            const productos = [];
+            Object.values(datosOcupacion.niveles).forEach(nivel => {
+              if (nivel.skus) {
+                Object.values(nivel.skus).forEach(sku => {
+                  productos.push({
+                    sku: sku.sku,
+                    descripcion: sku.descripcion,
+                    cantidad: sku.pallets || sku.cajas || 0
+                  });
+                });
+              }
+            });
+
+            if (productos.length > 0) {
+              contenido += `<strong>Productos:</strong> ${productos.length}<br>`;
+              const productosTexto = productos
+                .slice(0, 3)
+                .map((p) => `${p.sku} (${p.cantidad})`)
+                .join(", ");
+              contenido += `<span style="font-size: 0.9em;">${productosTexto}</span>`;
+              if (productos.length > 3) {
+                contenido += `<span style="font-size: 0.9em;"> y ${productos.length - 3} más...</span>`;
+              }
+            }
+          }
+        }
+
+        if (datosVencimiento) {
+          const porcentajeVidaUtil = Math.round(parseFloat(datosVencimiento.porcentaje) || 0);
+          contenido += `<br><strong>Vida útil restante:</strong> ${porcentajeVidaUtil}%`;
+          
+          if (datosVencimiento.categoriasVidaUtil && datosVencimiento.categoriasVidaUtil.length > 0) {
+            contenido += `<br><strong>Categorías:</strong> ${datosVencimiento.categoriasVidaUtil.join(", ")}`;
+          }
+        }
+
+        this.tooltip.innerHTML = contenido;
+        this.tooltip.style.display = "block";
+        this.tooltip.style.opacity = "1";
+        this.tooltip.style.visibility = "visible";
+        this.positionTooltip(e);
+        
+        console.log("Tooltip configurado:", {
+          display: this.tooltip.style.display,
+          opacity: this.tooltip.style.opacity,
+          visibility: this.tooltip.style.visibility,
+          position: `${this.tooltip.style.left}, ${this.tooltip.style.top}`,
+          contenido: contenido
+        });
+      }
+    },
+
+    /**
+     * Obtiene el elemento objetivo del evento
+     */
+    getTargetElement(e) {
+      let target = e.target;
+
+      // Buscar en elementos padre si es necesario
+      while (target && target !== document) {
+        if (target.tagName === "rect" || target.tagName === "g") {
+          const id = target.getAttribute("id");
+          if (id && (id.includes("-") || id.includes("."))) {
+            return target;
+          }
+        }
+        target = target.parentElement;
+      }
+
+      return null;
+    },
+
+    /**
+     * Posiciona el tooltip
+     */
+    positionTooltip(e) {
+      if (!this.tooltip) return;
+
+      const rect = this.tooltip.getBoundingClientRect();
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+
+      let left = e.pageX + 10;
+      let top = e.pageY + 10;
+
+      // Ajustar posición si se sale de la pantalla
+      if (left + rect.width > viewportWidth) {
+        left = e.pageX - rect.width - 10;
+      }
+
+      if (top + rect.height > viewportHeight) {
+        top = e.pageY - rect.height - 10;
+      }
+
+      // Asegurar que no se salga por la izquierda o arriba
+      left = Math.max(10, left);
+      top = Math.max(10, top);
+
+      this.tooltip.style.left = `${left}px`;
+      this.tooltip.style.top = `${top}px`;
+    },
+
+    /**
+     * Oculta tooltip
+     */
+    hide() {
+      if (this.tooltip) {
+        this.tooltip.style.display = "none";
+      }
+      this.unhighlightElement();
+    },
+
+    /**
+     * Resalta elemento
+     */
+    highlightElement(e) {
+      this.unhighlightElement();
+
+      const targetElement = this.getTargetElement(e);
+      if (targetElement) {
+        const originalStroke = targetElement.getAttribute("stroke");
+        const originalStrokeWidth = targetElement.getAttribute("stroke-width");
+
+        targetElement.setAttribute(
+          "data-original-stroke",
+          originalStroke || "none"
+        );
+        targetElement.setAttribute(
+          "data-original-stroke-width",
+          originalStrokeWidth || "1"
+        );
+        targetElement.setAttribute("stroke", "#000000");
+        targetElement.setAttribute("stroke-width", "2");
+
+        this.currentHighlighted = targetElement;
+      }
+    },
+
+    /**
+     * Quita resaltado de elementos
+     */
+    unhighlightElement() {
+      if (this.currentHighlighted) {
+        const originalStroke = this.currentHighlighted.getAttribute(
+          "data-original-stroke"
+        );
+        const originalStrokeWidth = this.currentHighlighted.getAttribute(
+          "data-original-stroke-width"
+        );
+
+        this.currentHighlighted.setAttribute(
+          "stroke",
+          originalStroke === "none" ? "none" : originalStroke
+        );
+        this.currentHighlighted.setAttribute(
+          "stroke-width",
+          originalStrokeWidth
+        );
+
+        this.currentHighlighted.removeAttribute("data-original-stroke");
+        this.currentHighlighted.removeAttribute("data-original-stroke-width");
+
+        this.currentHighlighted = null;
+      }
+    },
+
+    /**
+     * Configura tooltips en elementos SVG
+     */
+    configureTooltips() {
+      const svgContainer = document.getElementById("svg-container");
+      if (!svgContainer) {
+        console.warn("SVG container no encontrado para configurar tooltips");
+        return;
+      }
+
+      console.log("Configurando tooltips en SVG container...");
+
+      // Limpiar listeners existentes para evitar duplicados
+      if (this.handleMouseOver) {
+        svgContainer.removeEventListener("mouseover", this.handleMouseOver);
+        svgContainer.removeEventListener("mousemove", this.handleMouseMove);
+        svgContainer.removeEventListener("mouseout", this.handleMouseOut);
+      }
+
+      // Definir handlers como propiedades para poder removerlos
+      this.handleMouseOver = (e) => {
+        const target = this.getTargetElement(e);
+        if (target) {
+          console.log(`Detectando hover sobre elemento: ${target.id}`);
+          this.show(e);
+        }
+      };
+
+      this.handleMouseMove = (e) => {
+        if (this.tooltip && this.tooltip.style.display === "block") {
+          this.positionTooltip(e);
+        }
+      };
+
+      this.handleMouseOut = (e) => {
+        const target = this.getTargetElement(e);
+        if (target) {
+          // Verificar si realmente salimos del elemento
+          const relatedTarget = e.relatedTarget;
+          if (!relatedTarget || !target.contains(relatedTarget)) {
+            this.hide();
+          }
+        }
+      };
+
+      // Configurar tooltips con delegación de eventos para elementos dinámicos
+      svgContainer.addEventListener("mouseover", this.handleMouseOver);
+      svgContainer.addEventListener("mousemove", this.handleMouseMove);
+      svgContainer.addEventListener("mouseout", this.handleMouseOut);
+
+      console.log("Tooltips configurados correctamente");
+    },
+
+    /**
+     * Reconfigura tooltips (útil después de actualizar el SVG)
+     */
+    reconfigure() {
+      console.log("Reconfigurando tooltips...");
+      // Limpiar event listeners anteriores si es necesario
+      this.tooltip = document.getElementById("tooltip");
+
+      setTimeout(() => {
+        this.configureTooltips();
+      }, 100);
+    },
+  };
+
+  // Exportar para uso global
+  window.TooltipManager = TooltipManager;
+</script>

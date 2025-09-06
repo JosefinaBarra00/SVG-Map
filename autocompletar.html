@@ -1,0 +1,264 @@
+<script>
+  /**
+   * Script de autocompletado para los filtros del mapa de bodega
+   */
+
+  // Inicializa el autocompletado para todos los campos
+  window.inicializarAutocompletado = function () {
+    // Configurar autocompletado para SKU
+    configurarAutocompletadoCampo("filtro-sku", obtenerSugerenciasSKU);
+
+    // Configurar autocompletado para ubicación
+    configurarAutocompletadoCampo(
+      "filtro-ubicacion",
+      obtenerSugerenciasUbicaciones
+    );
+
+    // Configurar autocompletado para producto (descripción)
+    configurarAutocompletadoCampo(
+      "filtro-producto",
+      obtenerSugerenciasProductos
+    );
+
+    // Configurar autocompletado para LPN
+    configurarAutocompletadoCampo("filtro-lpn", obtenerSugerenciasLPN);
+  };
+
+  function configurarAutocompletadoCampo(inputId, funcionSugerencias) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+
+    // Envolver el input en un contenedor para posicionar las sugerencias
+    const parent = input.parentNode;
+    const container = document.createElement("div");
+    container.className = "autocomplete-container";
+    parent.replaceChild(container, input);
+    container.appendChild(input);
+
+    // Crear el contenedor de sugerencias
+    const suggestionsDiv = document.createElement("div");
+    suggestionsDiv.className = "autocomplete-suggestions";
+    suggestionsDiv.id = `sugerencias-${inputId}`;
+    container.appendChild(suggestionsDiv);
+
+    // Variables para control de navegación
+    let selectedIndex = -1;
+    let sugerencias = [];
+
+    // Evento de entrada de texto
+    input.addEventListener(
+      "input",
+      debounce(function () {
+        const texto = this.value.trim();
+        if (texto.length < 2) {
+          suggestionsDiv.style.display = "none";
+          return;
+        }
+
+        // Obtener sugerencias usando la función pasada
+        sugerencias = funcionSugerencias(texto);
+        mostrarSugerencias(sugerencias, suggestionsDiv, input);
+      }, 300)
+    );
+
+    // Eventos de teclado para navegación
+    input.addEventListener("keydown", function (e) {
+      // Si no hay sugerencias visibles, no hacer nada
+      if (suggestionsDiv.style.display === "none") return;
+
+      switch (e.key) {
+        case "ArrowDown":
+          e.preventDefault();
+          selectedIndex = Math.min(selectedIndex + 1, sugerencias.length - 1);
+          actualizarSeleccion();
+          break;
+        case "ArrowUp":
+          e.preventDefault();
+          selectedIndex = Math.max(selectedIndex - 1, -1);
+          actualizarSeleccion();
+          break;
+        case "Enter":
+          e.preventDefault();
+          if (selectedIndex >= 0 && selectedIndex < sugerencias.length) {
+            seleccionarSugerencia(sugerencias[selectedIndex], input);
+            suggestionsDiv.style.display = "none";
+          }
+          break;
+        case "Escape":
+          suggestionsDiv.style.display = "none";
+          selectedIndex = -1;
+          break;
+      }
+    });
+
+    // Evento de clic fuera para cerrar sugerencias
+    document.addEventListener("click", function (e) {
+      if (!container.contains(e.target)) {
+        suggestionsDiv.style.display = "none";
+        selectedIndex = -1;
+      }
+    });
+
+    // Función para actualizar la selección visual
+    function actualizarSeleccion() {
+      const items = suggestionsDiv.querySelectorAll(".autocomplete-suggestion");
+      items.forEach((item, index) => {
+        item.classList.toggle("selected", index === selectedIndex);
+        if (index === selectedIndex) {
+          item.scrollIntoView({ block: "nearest" });
+        }
+      });
+    }
+  }
+
+  // Función para mostrar las sugerencias
+  function mostrarSugerencias(sugerencias, contenedor, input) {
+    if (sugerencias.length === 0) {
+      contenedor.style.display = "none";
+      return;
+    }
+
+    contenedor.innerHTML = "";
+
+    sugerencias.forEach((sugerencia, index) => {
+      const div = document.createElement("div");
+      div.className = "autocomplete-suggestion";
+      div.textContent = sugerencia;
+      div.addEventListener("click", function () {
+        seleccionarSugerencia(sugerencia, input);
+        contenedor.style.display = "none";
+      });
+      contenedor.appendChild(div);
+    });
+
+    contenedor.style.display = "block";
+  }
+
+  // Función para seleccionar una sugerencia
+  function seleccionarSugerencia(sugerencia, input) {
+    input.value = sugerencia;
+
+    // Disparar evento de cambio para activar filtros si es necesario
+    const evento = new Event("input", { bubbles: true });
+    input.dispatchEvent(evento);
+  }
+
+  // Funciones para obtener sugerencias según el tipo de campo
+  function obtenerSugerenciasSKU(texto) {
+    texto = texto.toUpperCase();
+    const sugerencias = [];
+
+    if (!window.datosProductos) return sugerencias;
+
+    for (const sku in window.datosProductos) {
+      if (sku.includes(texto)) {
+        sugerencias.push(sku);
+        if (sugerencias.length >= 5) break;
+      }
+    }
+
+    return sugerencias;
+  }
+
+  function obtenerSugerenciasProductos(texto) {
+    texto = texto.toUpperCase();
+    const sugerencias = [];
+    const productosVistos = new Set();
+
+    if (!window.datosProductos) return sugerencias;
+
+    for (const sku in window.datosProductos) {
+      const descripcion = window.datosProductos[sku].descripcion || "";
+
+      if (
+        descripcion.toUpperCase().includes(texto) &&
+        !productosVistos.has(descripcion)
+      ) {
+        productosVistos.add(descripcion);
+        sugerencias.push(descripcion);
+        if (sugerencias.length >= 5) break;
+      }
+    }
+
+    return sugerencias;
+  }
+
+  function obtenerSugerenciasUbicaciones(texto) {
+    texto = texto.toUpperCase();
+    const sugerencias = [];
+    const ubicacionesVistas = new Set();
+
+    // Buscar en los elementos del SVG
+    const elementos = document.querySelectorAll("g[data-ubicacion]");
+
+    for (const elemento of elementos) {
+      const ubicacion = elemento.getAttribute("data-ubicacion");
+
+      if (
+        ubicacion &&
+        ubicacion.includes(texto) &&
+        !ubicacionesVistas.has(ubicacion)
+      ) {
+        ubicacionesVistas.add(ubicacion);
+        sugerencias.push(ubicacion);
+        if (sugerencias.length >= 5) break;
+      }
+    }
+
+    return sugerencias;
+  }
+
+  function obtenerSugerenciasLPN(texto) {
+    texto = texto.toUpperCase();
+    const sugerencias = [];
+    const lpnsVistos = new Set();
+
+    // Solo podemos sugerir LPNs si tenemos datos detallados
+    if (!window.datosUbicaciones) return sugerencias;
+
+    // Recorrer todas las ubicaciones y buscar LPNs
+    const tipoMapa =
+      document.getElementById("tipoMapaSelector")?.value || "ocupacion";
+    const datosActuales = window.datosUbicaciones[tipoMapa] || {};
+
+    for (const id in datosActuales) {
+      const datos = datosActuales[id];
+      if (datos.niveles) {
+        // Buscar en cada nivel
+        for (const nivelId in datos.niveles) {
+          const nivel = datos.niveles[nivelId];
+          if (nivel.skus) {
+            // Buscar en cada SKU del nivel
+            for (const skuId in nivel.skus) {
+              const skuInfo = nivel.skus[skuId];
+              if (skuInfo.lpns && Array.isArray(skuInfo.lpns)) {
+                // Buscar en cada LPN
+                for (const lpn of skuInfo.lpns) {
+                  if (lpn && lpn.includes(texto) && !lpnsVistos.has(lpn)) {
+                    lpnsVistos.add(lpn);
+                    sugerencias.push(lpn);
+                    if (sugerencias.length >= 5) {
+                      return sugerencias;
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return sugerencias;
+  }
+
+  // Función debounce para optimizar las llamadas durante escritura
+  function debounce(func, wait) {
+    let timeout;
+    return function (...args) {
+      const context = this;
+      clearTimeout(timeout);
+      timeout = setTimeout(() => func.apply(context, args), wait);
+    };
+  }
+</script>

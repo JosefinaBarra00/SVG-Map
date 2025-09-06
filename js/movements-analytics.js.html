@@ -1,0 +1,277 @@
+<script>
+/**
+ * Movements Analytics - Análisis avanzado de patrones de movimientos
+ */
+const MovementsAnalytics = {
+  
+  /**
+   * Identifica ubicaciones con patrones anómalos
+   */
+  identificarPatronesAnomalos() {
+    if (!window.datosUbicaciones?.movimientos) {
+      return { patrones: [], mensaje: 'No hay datos de movimientos' };
+    }
+
+    const movimientos = window.datosUbicaciones.movimientos;
+    const patrones = [];
+
+    Object.entries(movimientos).forEach(([ubicacion, datos]) => {
+      // Patrón 1: Alta salida pero baja entrada (posible problema de reposición)
+      if (datos.salidas > 10 && datos.entradas < 3) {
+        patrones.push({
+          ubicacion,
+          tipo: 'desbalance-salida',
+          descripcion: 'Alta salida, baja entrada - posible falta de reposición',
+          salidas: datos.salidas,
+          entradas: datos.entradas,
+          severidad: 'media'
+        });
+      }
+
+      // Patrón 2: Alta entrada pero baja salida (posible acumulación)
+      if (datos.entradas > 10 && datos.salidas < 3) {
+        patrones.push({
+          ubicacion,
+          tipo: 'desbalance-entrada',
+          descripcion: 'Alta entrada, baja salida - posible acumulación',
+          salidas: datos.salidas,
+          entradas: datos.entradas,
+          severidad: 'baja'
+        });
+      }
+
+      // Patrón 3: Actividad extremadamente alta (posible ubicación crítica)
+      const totalMovimientos = datos.salidas + datos.entradas;
+      if (totalMovimientos > 50) {
+        patrones.push({
+          ubicacion,
+          tipo: 'actividad-critica',
+          descripcion: 'Actividad extremadamente alta - ubicación crítica',
+          salidas: datos.salidas,
+          entradas: datos.entradas,
+          total: totalMovimientos,
+          severidad: 'alta'
+        });
+      }
+
+      // Patrón 4: Sin movimiento en ubicaciones que deberían tener
+      if (totalMovimientos === 0 && this.esUbicacionPrincipal(ubicacion)) {
+        patrones.push({
+          ubicacion,
+          tipo: 'sin-actividad',
+          descripcion: 'Sin movimientos en ubicación principal - revisar',
+          salidas: 0,
+          entradas: 0,
+          severidad: 'media'
+        });
+      }
+    });
+
+    return {
+      patrones: patrones.sort((a, b) => {
+        const severidades = { 'alta': 3, 'media': 2, 'baja': 1 };
+        return severidades[b.severidad] - severidades[a.severidad];
+      }),
+      mensaje: `Se encontraron ${patrones.length} patrones anómalos`
+    };
+  },
+
+  /**
+   * Determina si una ubicación es considerada principal
+   */
+  esUbicacionPrincipal(ubicacion) {
+    // Ubicaciones principales suelen estar en áreas A, B, C y niveles bajos
+    const patron = /^[ABC]-\d{2}-\d{2}-0[12]$/;
+    return patron.test(ubicacion);
+  },
+
+  /**
+   * Calcula eficiencia de secuencia de asignación
+   */
+  calcularEficienciaSecuencia() {
+    if (!window.datosUbicaciones?.movimientos) {
+      return { eficiencia: 0, mensaje: 'No hay datos disponibles' };
+    }
+
+    const movimientos = window.datosUbicaciones.movimientos;
+    const areas = this.agruparPorArea(movimientos);
+    
+    let totalEficiencia = 0;
+    let areasEvaluadas = 0;
+
+    Object.entries(areas).forEach(([area, ubicaciones]) => {
+      const eficienciaArea = this.evaluarEficienciaArea(area, ubicaciones);
+      if (eficienciaArea > 0) {
+        totalEficiencia += eficienciaArea;
+        areasEvaluadas++;
+      }
+    });
+
+    const eficienciaPromedio = areasEvaluadas > 0 ? totalEficiencia / areasEvaluadas : 0;
+
+    return {
+      eficiencia: Math.round(eficienciaPromedio * 100) / 100,
+      mensaje: this.interpretarEficiencia(eficienciaPromedio),
+      detalleAreas: areas
+    };
+  },
+
+  /**
+   * Agrupa movimientos por área
+   */
+  agruparPorArea(movimientos) {
+    const areas = {};
+    
+    Object.entries(movimientos).forEach(([ubicacion, datos]) => {
+      const area = ubicacion.split('-')[0];
+      if (!areas[area]) {
+        areas[area] = {};
+      }
+      areas[area][ubicacion] = datos;
+    });
+
+    return areas;
+  },
+
+  /**
+   * Evalúa eficiencia de un área específica
+   */
+  evaluarEficienciaArea(area, ubicaciones) {
+    // La eficiencia se basa en que ubicaciones más accesibles tengan más movimientos
+    const ubicacionesOrdenadas = Object.keys(ubicaciones).sort();
+    let puntuacionEficiencia = 0;
+    let totalUbicaciones = 0;
+
+    ubicacionesOrdenadas.forEach((ubicacion, index) => {
+      const datos = ubicaciones[ubicacion];
+      const totalMovimientos = datos.salidas + datos.entradas;
+      
+      if (totalMovimientos > 0) {
+        // Ubicaciones más bajas (índice menor) deberían tener más movimientos
+        const factorPosicion = (ubicacionesOrdenadas.length - index) / ubicacionesOrdenadas.length;
+        const factorMovimientos = Math.min(totalMovimientos / 20, 1); // Normalizar a 1
+        
+        puntuacionEficiencia += factorPosicion * factorMovimientos;
+        totalUbicaciones++;
+      }
+    });
+
+    return totalUbicaciones > 0 ? puntuacionEficiencia / totalUbicaciones : 0;
+  },
+
+  /**
+   * Interpreta el resultado de eficiencia
+   */
+  interpretarEficiencia(eficiencia) {
+    if (eficiencia >= 0.8) {
+      return 'Excelente: La secuencia de asignación es muy eficiente';
+    } else if (eficiencia >= 0.6) {
+      return 'Buena: La secuencia de asignación es adecuada con oportunidades de mejora';
+    } else if (eficiencia >= 0.4) {
+      return 'Regular: La secuencia de asignación necesita optimización';
+    } else {
+      return 'Deficiente: La secuencia de asignación requiere revisión urgente';
+    }
+  },
+
+  /**
+   * Genera reporte de análisis completo
+   */
+  generarReporteCompleto() {
+    const patrones = this.identificarPatronesAnomalos();
+    const eficiencia = this.calcularEficienciaSecuencia();
+    const estadisticas = window.MovementsHelper?.getMovementsStats();
+
+    return {
+      fecha: new Date().toLocaleString(),
+      estadisticas,
+      eficiencia,
+      patrones,
+      recomendaciones: this.generarRecomendaciones(patrones, eficiencia)
+    };
+  },
+
+  /**
+   * Genera recomendaciones basadas en el análisis
+   */
+  generarRecomendaciones(patrones, eficiencia) {
+    const recomendaciones = [];
+
+    // Recomendaciones basadas en eficiencia
+    if (eficiencia.eficiencia < 0.6) {
+      recomendaciones.push({
+        tipo: 'eficiencia',
+        prioridad: 'alta',
+        descripcion: 'Revisar y optimizar la secuencia de asignación de ubicaciones',
+        accion: 'Priorizar ubicaciones más accesibles para productos de alta rotación'
+      });
+    }
+
+    // Recomendaciones basadas en patrones
+    const patronesAltos = patrones.patrones.filter(p => p.severidad === 'alta');
+    if (patronesAltos.length > 0) {
+      recomendaciones.push({
+        tipo: 'patrones-criticos',
+        prioridad: 'alta',
+        descripcion: `Se detectaron ${patronesAltos.length} ubicaciones con actividad crítica`,
+        accion: 'Considerar dividir la carga o optimizar procesos en estas ubicaciones'
+      });
+    }
+
+    const patronesDesbalance = patrones.patrones.filter(p => p.tipo.includes('desbalance'));
+    if (patronesDesbalance.length > 5) {
+      recomendaciones.push({
+        tipo: 'desbalance',
+        prioridad: 'media',
+        descripcion: 'Múltiples ubicaciones con desbalance entrada/salida',
+        accion: 'Revisar políticas de reposición y gestión de inventario'
+      });
+    }
+
+    return recomendaciones;
+  },
+
+  /**
+   * Exporta reporte a texto para mostrar
+   */
+  exportarReporteTexto(reporte) {
+    let texto = `=== REPORTE DE ANÁLISIS DE MOVIMIENTOS ===\n`;
+    texto += `Fecha: ${reporte.fecha}\n\n`;
+
+    if (reporte.estadisticas) {
+      texto += `ESTADÍSTICAS GENERALES:\n`;
+      texto += `- Total ubicaciones: ${reporte.estadisticas.totalUbicaciones}\n`;
+      texto += `- Total salidas: ${reporte.estadisticas.totalSalidas}\n`;
+      texto += `- Total entradas: ${reporte.estadisticas.totalEntradas}\n`;
+      texto += `- Promedio salidas: ${reporte.estadisticas.promedioSalidas.toFixed(1)}\n`;
+      texto += `- Promedio entradas: ${reporte.estadisticas.promedioEntradas.toFixed(1)}\n\n`;
+    }
+
+    texto += `EFICIENCIA DE SECUENCIA:\n`;
+    texto += `- Puntuación: ${reporte.eficiencia.eficiencia}/1.0\n`;
+    texto += `- Evaluación: ${reporte.eficiencia.mensaje}\n\n`;
+
+    if (reporte.patrones.patrones.length > 0) {
+      texto += `PATRONES DETECTADOS (${reporte.patrones.patrones.length}):\n`;
+      reporte.patrones.patrones.forEach((patron, i) => {
+        texto += `${i + 1}. ${patron.ubicacion} - ${patron.descripcion}\n`;
+        texto += `   Salidas: ${patron.salidas}, Entradas: ${patron.entradas} (${patron.severidad})\n`;
+      });
+      texto += '\n';
+    }
+
+    if (reporte.recomendaciones.length > 0) {
+      texto += `RECOMENDACIONES:\n`;
+      reporte.recomendaciones.forEach((rec, i) => {
+        texto += `${i + 1}. [${rec.prioridad.toUpperCase()}] ${rec.descripcion}\n`;
+        texto += `   Acción: ${rec.accion}\n`;
+      });
+    }
+
+    return texto;
+  }
+};
+
+// Exportar para uso global
+window.MovementsAnalytics = MovementsAnalytics;
+</script>

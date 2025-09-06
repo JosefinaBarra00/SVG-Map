@@ -1,0 +1,482 @@
+<script>
+  /**
+   * SVG Manager - Manejo de SVG, colores y visualización
+   */
+  const SVGManager = {
+    currentOperation: { cancel: false, id: null },
+
+    /**
+     * Inicializa el gestor SVG
+     */
+    init() {
+      this.loadBaseSVG(false);
+      this.setupViewBoxAdjustment();
+    },
+
+    /**
+     * Carga el SVG base
+     */
+    async loadBaseSVG(loadDataAfter = false) {
+      console.log("Cargando SVG base...");
+
+      const svgContainer = document.getElementById("svg-container");
+      if (svgContainer) {
+        svgContainer.innerHTML =
+          '<div class="svg-loading"><div class="loader-spinner"></div><p>Cargando mapa...</p></div>';
+      }
+
+      try {
+        let svgContent;
+
+        // Esperar a que DataService esté disponible (máximo 5 segundos)
+        const maxWaitTime = 5000;
+        const startTime = Date.now();
+
+        while (!window.DataService && Date.now() - startTime < maxWaitTime) {
+          console.log("Esperando a que DataService esté disponible...");
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+
+        if (!window.DataService) {
+          console.warn(
+            "DataService no está disponible después de 5 segundos, usando fallback"
+          );
+          // Fallback: llamar directamente a Google Apps Script
+          svgContent = await new Promise((resolve, reject) => {
+            google.script.run
+              .withSuccessHandler(resolve)
+              .withFailureHandler(reject)
+              .obtenerSVGBaseParaUI();
+          });
+        } else {
+          console.log("DataService disponible, obteniendo SVG base");
+          svgContent = await window.DataService.getBaseSVG();
+        }
+
+        console.log("SVG base recibido, insertando en el DOM...");
+        if (svgContainer && svgContent) {
+          svgContainer.innerHTML = svgContent;
+          console.log("SVG base insertado correctamente");
+
+          // Ajustar viewBox después de insertar el SVG
+          setTimeout(() => {
+            this.adjustViewBox();
+
+            // Reconfigurar tooltips y modales
+            if (window.TooltipManager) {
+              window.TooltipManager.reconfigure();
+            }
+            if (window.ModalManager) {
+              window.ModalManager.reconfigure();
+            }
+
+            // Solo cargar datos si se solicita explícitamente
+            if (loadDataAfter && window.DataService) {
+              setTimeout(() => {
+                console.log("Cargando datos después del SVG...");
+                window.DataService.loadLocationData();
+              }, 500);
+            }
+          }, 100);
+        } else {
+          console.error(
+            "No se pudo insertar el SVG: contenedor o contenido faltante"
+          );
+          if (svgContainer) {
+            svgContainer.innerHTML =
+              '<div class="svg-loading"><p>Error al cargar el mapa</p></div>';
+          }
+        }
+      } catch (error) {
+        console.error("Error al cargar SVG base:", error);
+        if (svgContainer) {
+          svgContainer.innerHTML =
+            '<div class="svg-loading"><p>Error al cargar el mapa: ' +
+            error +
+            "</p></div>";
+        }
+      }
+    },
+
+    /**
+     * Ajusta el viewBox del SVG para eliminar espacio vacío
+     */
+    adjustViewBox() {
+      console.log("Ajustando viewBox del SVG...");
+
+      const svgContainer = document.getElementById("svg-container");
+      const svgElement = svgContainer
+        ? svgContainer.querySelector("svg")
+        : null;
+
+      if (!svgElement) {
+        console.warn("No se encontró elemento SVG para ajustar");
+        return;
+      }
+
+      try {
+        // Obtener la bounding box de todo el contenido visible
+        const bbox = svgElement.getBBox();
+
+        if (bbox.width > 0 && bbox.height > 0) {
+          // Agregar un pequeño margen (5% del tamaño)
+          const margen = Math.max(bbox.width, bbox.height) * 0.05;
+
+          const x = bbox.x - margen;
+          const y = bbox.y - margen;
+          const width = bbox.width + margen * 2;
+          const height = bbox.height + margen * 2;
+
+          // Establecer el nuevo viewBox
+          svgElement.setAttribute("viewBox", `${x} ${y} ${width} ${height}`);
+
+          // Asegurar que el SVG sea responsive
+          svgElement.setAttribute("width", "100%");
+          svgElement.setAttribute("height", "100%");
+          svgElement.setAttribute("preserveAspectRatio", "xMidYMid meet");
+
+          console.log(`ViewBox ajustado a: ${x} ${y} ${width} ${height}`);
+        } else {
+          console.warn("No se pudo obtener bounding box válida del SVG");
+        }
+      } catch (error) {
+        console.error("Error al ajustar viewBox:", error);
+
+        // Fallback: ajustar solo las dimensiones básicas
+        svgElement.setAttribute("width", "100%");
+        svgElement.setAttribute("height", "100%");
+        svgElement.setAttribute("preserveAspectRatio", "xMidYMid meet");
+      }
+    },
+
+    /**
+     * Configura ajuste automático de viewBox
+     */
+    setupViewBoxAdjustment() {
+      // Ajustar viewBox cuando se redimensiona la ventana
+      window.addEventListener(
+        "resize",
+        Utils.debounce(() => {
+          this.adjustViewBox();
+        }, 250)
+      );
+    },
+
+    /**
+     * Actualiza visualización del mapa
+     */
+    updateVisualization(tipoMapa) {
+      if (window.colorApplicationInProgress) {
+        console.log("Forzando cancelación desde cambio de visualización");
+        if (this.currentOperation) {
+          this.currentOperation.cancel = true;
+        }
+        window.colorApplicationInProgress = false;
+
+        // Ocultar todos los indicadores de carga
+        document.querySelectorAll(".svg-loading").forEach((el) => {
+          el.style.display = "none";
+        });
+      }
+
+      console.log(`Cambiando visualización a mapa de ${tipoMapa}...`);
+
+      // Actualizar leyenda
+      if (window.LegendManager) {
+        window.LegendManager.updateLegend(tipoMapa);
+      }
+
+      // Aplicar colores según el tipo de mapa
+      if (window.datosUbicaciones) {
+        this.applyColorsToSVG(tipoMapa, window.datosUbicaciones);
+      } else {
+        console.log("No hay datos de ubicaciones cargados, cargando...");
+        if (window.DataService) {
+          window.DataService.loadLocationData().then(() => {
+            if (window.datosUbicaciones) {
+              this.applyColorsToSVG(tipoMapa, window.datosUbicaciones);
+            }
+          });
+        }
+      }
+    },
+
+    /**
+     * Aplica colores al SVG
+     */
+    applyColorsToSVG(tipoMapa, datosUbicaciones) {
+      console.log(`Aplicando colores para mapa de ${tipoMapa}...`);
+
+      if (window.colorApplicationInProgress) {
+        console.log("Ya hay una aplicación de colores en progreso");
+        return;
+      }
+
+      window.colorApplicationInProgress = true;
+      const operationId = Date.now();
+      this.currentOperation = { cancel: false, id: operationId };
+
+      const loadingIndicator = document.querySelector(".svg-loading");
+      if (loadingIndicator) {
+        loadingIndicator.style.display = "flex";
+      }
+
+      if (!datosUbicaciones) {
+        console.error("No hay datos de ubicaciones para aplicar al SVG");
+        if (loadingIndicator) loadingIndicator.style.display = "none";
+        window.colorApplicationInProgress = false;
+        return;
+      }
+
+      const datosMapa = datosUbicaciones[tipoMapa] || {};
+      console.log(`Datos para ${tipoMapa}:`, {
+        cantidad: Object.keys(datosMapa).length,
+        primerosElementos: Object.keys(datosMapa).slice(0, 5),
+        primerElementoCompleto: Object.keys(datosMapa).length > 0 ? datosMapa[Object.keys(datosMapa)[0]] : null,
+      });
+
+      const svgContainer = document.getElementById("svg-container");
+
+      if (!svgContainer) {
+        console.error(`Contenedor SVG para ${tipoMapa} no encontrado`);
+        if (loadingIndicator) loadingIndicator.style.display = "none";
+        window.colorApplicationInProgress = false;
+        return;
+      }
+
+      // Verificar si hay elementos SVG
+      const elementosSVG = svgContainer.querySelectorAll("rect[id], g[id]");
+      console.log(`Elementos SVG encontrados: ${elementosSVG.length}`);
+      if (elementosSVG.length > 0) {
+        console.log(
+          "Primeros IDs de elementos SVG:",
+          Array.from(elementosSVG)
+            .slice(0, 5)
+            .map((el) => el.id)
+        );
+      }
+
+      // Primero colorear todos los elementos SVG como vacíos (verde)
+      this.resetAllElementsToDefault(elementosSVG);
+
+      // Aplicar colores en lotes para mejor rendimiento
+      this.applyColorsInBatches(
+        datosMapa,
+        tipoMapa,
+        operationId,
+        loadingIndicator
+      );
+    },
+
+    /**
+     * Resetea todos los elementos SVG al color por defecto (verde vacío)
+     */
+    resetAllElementsToDefault(elementosSVG) {
+      console.log("Reseteando todos los elementos SVG al color por defecto...");
+      const colorVacio = "#2D572C"; // Verde oscuro para ubicaciones vacías
+      
+      elementosSVG.forEach(elemento => {
+        if (elemento.id) {
+          elemento.setAttribute("fill", colorVacio);
+          elemento.style.fill = colorVacio;
+        }
+      });
+      
+      console.log(`${elementosSVG.length} elementos reseteados a color vacío`);
+    },
+
+    /**
+     * Aplica colores en lotes para mejor rendimiento
+     */
+    applyColorsInBatches(datosMapa, tipoMapa, operationId, loadingIndicator) {
+      const entradas = Object.entries(datosMapa);
+      const BATCH_SIZE = 50;
+
+      for (let i = 0; i < entradas.length; i += BATCH_SIZE) {
+        if (
+          this.currentOperation.cancel ||
+          this.currentOperation.id !== operationId
+        ) {
+          console.log("Operación cancelada");
+          return;
+        }
+
+        setTimeout(() => {
+          const lote = entradas.slice(i, i + BATCH_SIZE);
+          this.processBatch(lote, tipoMapa);
+
+          // Si es el último lote, finalizar
+          if (i + BATCH_SIZE >= entradas.length) {
+            this.finalizeBatchProcessing(operationId, loadingIndicator);
+          }
+        }, (i / BATCH_SIZE) * 10); // Espaciar los lotes
+      }
+    },
+
+    /**
+     * Procesa un lote de ubicaciones
+     */
+    processBatch(lote, tipoMapa) {
+      console.log(
+        `Procesando lote de ${lote.length} elementos para ${tipoMapa}`
+      );
+      let elementosEncontrados = 0;
+      let elementosNoEncontrados = [];
+
+      lote.forEach(([ubicacionId, datos]) => {
+        const elemento = document.getElementById(ubicacionId);
+        if (elemento) {
+          const color = this.getColorForData(datos, tipoMapa, ubicacionId);
+          elemento.setAttribute("fill", color);
+          elemento.style.fill = color; // También establecer como estilo CSS
+          elementosEncontrados++;
+          
+          // Log solo para los primeros elementos para debugging
+          if (elementosEncontrados <= 3) {
+            console.log(`Aplicando color a ${ubicacionId}:`, {
+              porcentaje: datos.porcentaje,
+              utilizado: datos.utilizado,
+              capacidad: datos.capacidad_maxima,
+              color: color,
+              datosCompletos: datos
+            });
+          }
+        } else {
+          elementosNoEncontrados.push(ubicacionId);
+        }
+      });
+
+      console.log(
+        `Lote procesado: ${elementosEncontrados} encontrados, ${elementosNoEncontrados.length} no encontrados`
+      );
+      if (
+        elementosNoEncontrados.length > 0 &&
+        elementosNoEncontrados.length <= 5
+      ) {
+        console.log("IDs no encontrados:", elementosNoEncontrados);
+      }
+    },
+
+    /**
+     * Obtiene color para los datos según el tipo de mapa
+     */
+    getColorForData(datos, tipoMapa, ubicacionId = null) {
+      if (tipoMapa === "ocupacion") {
+        // Siempre usar nuestra lógica de ocupación correcta si tenemos la ubicación
+        if (ubicacionId && datos) {
+          const ocupacionInfo = Utils.calculateCorrectOccupancy(ubicacionId, datos);
+          return this.generateOccupancyColor(ocupacionInfo.porcentaje);
+        }
+        // Fallback: usar color precomputado si no hay ubicacionId
+        if (datos.color) {
+          return datos.color;
+        }
+        // Último fallback: usar porcentaje directo (puede estar mal)
+        const porcentaje = parseFloat(datos.porcentaje) || 0;
+        console.warn(`Usando porcentaje directo para color (puede estar mal): ${porcentaje}%`);
+        return this.generateOccupancyColor(porcentaje);
+      } else if (tipoMapa === "vencimiento") {
+        // Usar el color que ya viene calculado en los datos
+        if (datos.color) {
+          return datos.color;
+        }
+        // Fallback para vencimiento
+        const porcentaje = parseFloat(datos.porcentaje) || 0;
+        return this.generateExpiryColor(porcentaje);
+      } else if (tipoMapa === "movimientos") {
+        // Obtener tipo de visualización de movimientos del selector
+        const tipoMovimientoSelector = document.getElementById('tipoMovimientoSubSelector');
+        const tipoMovimiento = tipoMovimientoSelector ? tipoMovimientoSelector.value : 'salidas';
+        
+        console.log(`Procesando movimientos para ubicación ${ubicacionId}: tipo=${tipoMovimiento}, datos=`, datos);
+        
+        // Usar el color correspondiente al tipo de movimiento
+        if (tipoMovimiento === 'salidas' && datos.colorSalidas) {
+          console.log(`Color salidas: ${datos.colorSalidas}`);
+          return datos.colorSalidas;
+        } else if (tipoMovimiento === 'entradas' && datos.colorEntradas) {
+          console.log(`Color entradas: ${datos.colorEntradas}`);
+          return datos.colorEntradas;
+        }
+        
+        // Fallback para movimientos (sin datos = sin movimiento)
+        console.log(`Sin datos de movimientos para ${ubicacionId}, usando color por defecto`);
+        return "#2D572C";
+      }
+      return "#2D572C"; // Verde por defecto para ubicaciones sin datos
+    },
+
+    /**
+     * Genera color de ocupación
+     */
+    generateOccupancyColor(porcentaje) {
+      if (porcentaje <= 0) return "#2D572C";   // Verde oscuro - Vacío
+      if (porcentaje <= 25) return "#00FF00";  // Verde - 0-25%
+      if (porcentaje <= 50) return "#FFFF00";  // Amarillo - 25-50% 
+      if (porcentaje <= 75) return "#FF8800";  // Naranja - 50-75%
+      return "#FF0000";                        // Rojo - 75-100%
+    },
+
+    /**
+     * Genera color de vencimiento
+     */
+    generateExpiryColor(porcentaje) {
+      if (porcentaje >= 75) return "#00FF00";  // Verde - 75-100% vida útil
+      if (porcentaje >= 50) return "#FFFF00";  // Amarillo - 50-75%
+      if (porcentaje >= 25) return "#FF8800";  // Naranja - 25-50%
+      return "#FF0000";                        // Rojo - 0-25%
+    },
+
+    /**
+     * Finaliza el procesamiento en lotes
+     */
+    finalizeBatchProcessing(operationId, loadingIndicator) {
+      setTimeout(() => {
+        if (loadingIndicator) {
+          loadingIndicator.style.display = "none";
+        }
+
+        if (this.currentOperation && this.currentOperation.id === operationId) {
+          window.colorApplicationInProgress = false;
+
+          // Ajustar viewBox después de aplicar colores
+          if (window.ajustarViewBoxSVG) {
+            console.log("Ajustando viewBox después de aplicar colores SVG...");
+            window.ajustarViewBoxSVG();
+          }
+
+          if (window.actualizarDashboardCards) {
+            window.actualizarDashboardCards();
+          }
+          console.log("Actualizando cards desde función SVG");
+        }
+      }, 300);
+    },
+
+    /**
+     * Reajusta el mapa
+     */
+    adjustMap() {
+      this.adjustViewBox();
+
+      // Reconfigurar tooltips y modales
+      if (window.TooltipManager) {
+        window.TooltipManager.reconfigure();
+      }
+      if (window.ModalManager) {
+        window.ModalManager.reconfigure();
+      }
+    },
+  };
+
+  // Exportar para uso global
+  window.SVGManager = SVGManager;
+
+  // Mantener compatibilidad con funciones existentes
+  window.cargarSVGBase = (loadDataAfter) =>
+    SVGManager.loadBaseSVG(loadDataAfter);
+  window.ajustarViewBoxSVG = () => SVGManager.adjustViewBox();
+  window.actualizarVisualizacionMapa = (tipoMapa) =>
+    SVGManager.updateVisualization(tipoMapa);
+  window.reajustarMapa = () => SVGManager.adjustMap();
+</script>

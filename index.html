@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Sistema de visualización de inventario de bodega CCU"
+    />
+    <title><?= TITULO ?></title>
+
+    <!-- Estilos refactorizados -->
+    <?!= include('style'); ?>
+
+    <!-- Dependencias externas -->
+    <link
+      href="https://cdnjs.cloudflare.com/ajax/libs/fullcalendar/5.10.1/main.min.css"
+      rel="stylesheet"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+  </head>
+
+  <body>
+    <div class="grid-container">
+      <!-- Logo Section -->
+      <div class="logo-section">
+        <img
+          src="https://upload.wikimedia.org/wikipedia/commons/1/19/CCU_LOGO.png"
+          alt="Logo CCU"
+          class="company-logo-img"
+        />
+      </div>
+
+      <!-- Upload Button -->
+      <button
+        id="uploadButton"
+        class="upload-btn"
+        aria-label="Cargar archivo Excel"
+      >
+        <span aria-hidden="true">📁</span>
+        <span>CARGAR<br />ARCHIVO</span>
+      </button>
+
+      <!-- Upload Movements Button -->
+      <button
+        id="uploadMovementsButton"
+        class="upload-btn movements-btn"
+        aria-label="Cargar archivo de movimientos"
+        style="display: none;"
+      >
+        <span aria-hidden="true">📊</span>
+        <span>CARGAR<br />MOVIMIENTOS</span>
+      </button>
+
+      <!-- Stats Section -->
+      <div class="stats-container">
+        <?!= include('statsCard'); ?>
+      </div>
+
+      <!-- Map Section -->
+      <div class="mapa-section">
+        <div class="mapa-header">
+          <h2>MAPA DEL ALMACÉN</h2>
+          <div class="map-controls-header">
+            <select
+              id="tipoMapaSelector"
+              class="selector-mapa"
+              aria-label="Tipo de visualización"
+            >
+              <option value="ocupacion">Ver Ocupación</option>
+              <option value="vencimiento">Ver Vencimientos</option>
+              <option value="movimientos">Ver Movimientos</option>
+            </select>
+            <select
+              id="tipoMovimientoSubSelector"
+              class="selector-mapa"
+              aria-label="Tipo de movimiento"
+              style="display: none; margin-left: 10px;"
+            >
+              <option value="salidas">Salidas</option>
+              <option value="entradas">Entradas</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Map Controls -->
+        <div class="map-controls">
+          <button id="fullscreen-btn" class="map-control-btn" title="Pantalla completa">
+            <span>⛶</span>
+          </button>
+          <button id="zoom-in-btn" class="map-control-btn" title="Acercar">
+            <span>+</span>
+          </button>
+          <button id="zoom-out-btn" class="map-control-btn" title="Alejar">
+            <span>−</span>
+          </button>
+          <button id="reset-zoom-btn" class="map-control-btn" title="Restablecer vista">
+            <span>⌂</span>
+          </button>
+          <div id="zoom-indicator" class="zoom-indicator" title="Nivel de zoom">
+            100%
+          </div>
+        </div>
+
+        <div
+          id="svg-container"
+          class="svg-container"
+          role="img"
+          aria-label="Mapa interactivo de la bodega"
+        >
+          <div class="svg-loading">
+            <div class="loader-spinner"></div>
+            <p>Cargando mapa...</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Legend Section -->
+      <div class="leyenda-section">
+        <div class="leyenda-header">LEYENDA</div>
+
+        <div id="leyenda-ocupacion" class="leyenda-content">
+          <div class="leyenda-item">
+            <div class="leyenda-color" style="background-color: #2d572c"></div>
+            <span>Vacío</span>
+          </div>
+          <div class="leyenda-item">
+            <div class="leyenda-color" style="background-color: #00ff00"></div>
+            <span>0-25%</span>
+          </div>
+          <div class="leyenda-item">
+            <div class="leyenda-color" style="background-color: #ffff00"></div>
+            <span>25-50%</span>
+          </div>
+          <div class="leyenda-item">
+            <div class="leyenda-color" style="background-color: #ff8800"></div>
+            <span>50-75%</span>
+          </div>
+          <div class="leyenda-item">
+            <div class="leyenda-color" style="background-color: #ff0000"></div>
+            <span>75-100%</span>
+          </div>
+        </div>
+
+        <div id="leyenda-vencimiento" class="leyenda-content hidden">
+          <div class="leyenda-item">
+            <div class="leyenda-color color-alto"></div>
+            <span>75-100%</span>
+          </div>
+          <div class="leyenda-item">
+            <div class="leyenda-color color-medio"></div>
+            <span>50-75%</span>
+          </div>
+          <div class="leyenda-item">
+            <div class="leyenda-color color-bajo"></div>
+            <span>25-50%</span>
+          </div>
+          <div class="leyenda-item">
+            <div class="leyenda-color color-critico"></div>
+            <span>0-25%</span>
+          </div>
+        </div>
+
+        <div id="leyenda-movimientos" class="leyenda-content hidden">
+          <div class="leyenda-item">
+            <div class="leyenda-color" style="background-color: #2d572c"></div>
+            <span>Sin movimiento</span>
+          </div>
+          <div class="leyenda-item">
+            <div class="leyenda-color" style="background-color: #00ff00"></div>
+            <span>Bajo (0-25%)</span>
+          </div>
+          <div class="leyenda-item">
+            <div class="leyenda-color" style="background-color: #ffff00"></div>
+            <span>Medio (25-50%)</span>
+          </div>
+          <div class="leyenda-item">
+            <div class="leyenda-color" style="background-color: #ff8800"></div>
+            <span>Alto (50-75%)</span>
+          </div>
+          <div class="leyenda-item">
+            <div class="leyenda-color" style="background-color: #ff0000"></div>
+            <span>Muy Alto (75-100%)</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Filters Section -->
+      <div class="filters-section">
+        <div class="filter-header">FILTROS</div>
+
+        <!-- Filtro SKU -->
+        <div class="filter-group">
+          <label for="filtro-sku">SKU</label>
+          <div class="autocomplete-container">
+            <input
+              type="text"
+              id="filtro-sku"
+              class="filter-input"
+              placeholder="Buscar SKU"
+              aria-describedby="sku-hint"
+              autocomplete="off"
+            />
+          </div>
+        </div>
+
+        <!-- Filtro Ubicación -->
+        <div class="filter-group">
+          <label for="filtro-ubicacion">Ubicación</label>
+          <div class="autocomplete-container">
+            <input
+              type="text"
+              id="filtro-ubicacion"
+              class="filter-input"
+              placeholder="Ej: A-01-01"
+              aria-describedby="ubicacion-hint"
+              autocomplete="off"
+            />
+          </div>
+        </div>
+
+        <!-- Filtro Áreas -->
+        <div class="filter-group">
+          <label for="areas-dropdown">Áreas</label>
+          <div class="dropdown-container">
+            <button
+              type="button"
+              id="areas-dropdown"
+              class="filter-input dropdown-btn"
+              aria-haspopup="true"
+              aria-expanded="false"
+            >
+              <span id="areas-selected-text">Todas</span>
+            </button>
+            <div
+              class="dropdown-content"
+              role="menu"
+              aria-labelledby="areas-dropdown"
+            >
+              <div class="checkbox-item all-checkbox">
+                <label>
+                  <input type="checkbox" id="select-all-areas" checked />
+                  <span>Seleccionar todas</span>
+                </label>
+              </div>
+              <div class="area-separator"></div>
+              <div id="areas-list"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="filter-buttons">
+          <button
+            id="btn-filtrar"
+            class="filter-btn"
+            aria-label="Aplicar filtros"
+          >
+            Filtrar
+          </button>
+          <button
+            id="btn-limpiar"
+            class="filter-btn filter-btn-clear"
+            aria-label="Limpiar filtros"
+          >
+            Limpiar
+          </button>
+        </div>
+
+        <!-- Resultado de filtros -->
+        <div
+          id="resultado-filtro"
+          class="filter-results hidden"
+          role="status"
+          aria-live="polite"
+        >
+          <p id="filter-summary"></p>
+        </div>
+
+        <!-- Filtros específicos para movimientos -->
+        <div id="filtros-movimientos" class="movements-filters hidden">
+          <div class="filter-header">FILTROS DE MOVIMIENTOS</div>
+          
+          <!-- Filtro por tipo de operación -->
+          <div class="filter-group">
+            <label for="filtro-operacion">Tipo de Operación</label>
+            <select id="filtro-operacion" class="filter-input">
+              <option value="">Todas las operaciones</option>
+              <option value="List Pick">List Pick (Picking)</option>
+              <option value="Trailer load">Trailer Load (Carga)</option>
+              <option value="Undirected Load Transfer">Transferencia</option>
+              <option value="Inventory Adjustment">Ajuste de Inventario</option>
+            </select>
+          </div>
+
+          <!-- Filtro por rango de frecuencia -->
+          <div class="filter-group">
+            <label for="filtro-frecuencia">Rango de Frecuencia</label>
+            <select id="filtro-frecuencia" class="filter-input">
+              <option value="">Todas las frecuencias</option>
+              <option value="alta">Alta actividad (75-100%)</option>
+              <option value="media">Actividad media (50-75%)</option>
+              <option value="baja">Baja actividad (25-50%)</option>
+              <option value="minima">Actividad mínima (0-25%)</option>
+              <option value="sin-movimiento">Sin movimiento</option>
+            </select>
+          </div>
+
+          <!-- Filtro por umbral mínimo -->
+          <div class="filter-group">
+            <label for="filtro-umbral">Movimientos mínimos</label>
+            <input 
+              type="number" 
+              id="filtro-umbral" 
+              class="filter-input" 
+              placeholder="Ej: 5"
+              min="0"
+              title="Mostrar solo ubicaciones con X o más movimientos"
+            >
+          </div>
+
+          <!-- Filtro por período específico -->
+          <div class="filter-group">
+            <label for="filtro-dia-semana">Día de la semana</label>
+            <select id="filtro-dia-semana" class="filter-input">
+              <option value="">Todos los días</option>
+              <option value="1">Lunes</option>
+              <option value="2">Martes</option>
+              <option value="3">Miércoles</option>
+              <option value="4">Jueves</option>
+              <option value="5">Viernes</option>
+              <option value="6">Sábado</option>
+              <option value="0">Domingo</option>
+            </select>
+          </div>
+
+          <div class="filter-buttons">
+            <button
+              id="btn-filtrar-movimientos"
+              class="filter-btn"
+              aria-label="Aplicar filtros de movimientos"
+            >
+              Filtrar Movimientos
+            </button>
+            <button
+              id="btn-limpiar-movimientos"
+              class="filter-btn filter-btn-clear"
+              aria-label="Limpiar filtros de movimientos"
+            >
+              Limpiar Filtros
+            </button>
+          </div>
+
+          <!-- Análisis avanzado -->
+          <div class="analysis-section" style="margin-top: 15px;">
+            <button
+              id="btn-analizar-patrones"
+              class="filter-btn"
+              style="width: 100%; background: #28a745; color: white;"
+              aria-label="Generar análisis de patrones"
+            >
+              📊 Analizar Patrones
+            </button>
+          </div>
+
+          <!-- Resultado de filtros de movimientos -->
+          <div
+            id="resultado-filtro-movimientos"
+            class="filter-results hidden"
+            role="status"
+            aria-live="polite"
+          >
+            <p id="movements-filter-summary"></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Históricos Button -->
+      <button class="historicos-btn" id="btn-historicos">Ver históricos</button>
+
+      <!-- Bottom Section -->
+      <div class="bottom-section">
+        <!-- Tabla de vencimientos -->
+        <div class="tabla-section">
+          <div class="section-header">TABLA VENCIMIENTOS</div>
+          <div class="table-container">
+            <table class="tabla-vencimientos" id="tabla-vencimientos">
+              <thead>
+                <tr>
+                  <th
+                    class="btn-ordenar"
+                    data-campo="sku"
+                    tabindex="0"
+                    role="button"
+                  >
+                    SKU
+                  </th>
+                  <th
+                    class="btn-ordenar"
+                    data-campo="descripcion"
+                    tabindex="0"
+                    role="button"
+                  >
+                    Descripción
+                  </th>
+                  <th
+                    class="btn-ordenar"
+                    data-campo="dias"
+                    tabindex="0"
+                    role="button"
+                  >
+                    Días
+                  </th>
+                  <th
+                    class="btn-ordenar"
+                    data-campo="cantidad"
+                    tabindex="0"
+                    role="button"
+                  >
+                    Cantidad
+                  </th>
+                  <th>Detalle</th>
+                </tr>
+              </thead>
+              <tbody id="vencimientos-tbody">
+                <tr>
+                  <td colspan="5" class="text-center">Cargando datos...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="data-summary">
+            <p id="resumen-vencimientos">Total: 0 productos</p>
+          </div>
+        </div>
+
+        <!-- Calendario -->
+        <div class="calendario-section">
+          <div class="section-header">CALENDARIO VENCIMIENTOS</div>
+          <div
+            id="calendar"
+            role="application"
+            aria-label="Calendario de vencimientos"
+          ></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tooltip -->
+    <div id="tooltip" class="tooltip" role="tooltip" aria-hidden="true"></div>
+
+    <!-- Modal de detalles -->
+    <div
+      id="ubicacionModal"
+      class="modal ubicacion-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-title"
+    >
+      <div class="modal-content ubicacion-modal-content">
+        <button class="close-modal" aria-label="Cerrar modal">&times;</button>
+        <div id="modalContent"></div>
+      </div>
+    </div>
+
+    <!-- Modal de vencimientos -->
+    <div
+      id="vencimiento-modal"
+      class="modal vencimiento-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="vencimiento-modal-title"
+    >
+      <div class="modal-content vencimiento-modal-content">
+        <button
+          id="close-vencimiento-modal"
+          class="close-modal"
+          aria-label="Cerrar modal"
+        >
+          &times;
+        </button>
+        <div id="vencimiento-detalle"></div>
+      </div>
+    </div>
+
+    <!-- Panel deslizable -->
+    <?!= include('scriptSlidePanel'); ?>
+
+    <!-- Panel de movimientos -->
+    <?!= include('scriptMovementsPanel'); ?>
+
+    <!-- Status bar -->
+    <!-- <div class="status-bar" role="status" aria-live="polite">
+      <span id="lastUpdateText">Cargando información...</span>
+    </div> -->
+
+    <!-- Scripts modularizados refactorizados -->
+    <?!= include('js/config.js.html'); ?>
+    <?!= include('js/utils.js.html'); ?>
+    <?!= include('js/data-service.js.html'); ?>
+    <?!= include('js/map-controller.js.html'); ?>
+    <?!= include('js/filter-manager.js.html'); ?>
+    <?!= include('js/map-navigator.js.html'); ?>
+
+    <!-- Nuevos módulos refactorizados -->
+    <?!= include('js/dom-manager.js.html'); ?>
+    <?!= include('js/tooltip-manager.js.html'); ?>
+    <?!= include('js/modal-manager.js.html'); ?>
+    <?!= include('js/svg-manager.js.html'); ?>
+    <?!= include('js/table-manager.js.html'); ?>
+    <?!= include('js/area-manager.js.html'); ?>
+    <?!= include('js/movements-helper.js.html'); ?>
+    <?!= include('js/movements-filter-manager.js.html'); ?>
+    <?!= include('js/movements-analytics.js.html'); ?>
+
+    <!-- Scripts principales simplificados -->
+    <?!= include('scripts'); ?>
+
+    <!-- Inicializador de aplicación -->
+    <?!= include('js/app-initializer.js.html'); ?>
+
+    <!-- Scripts específicos -->
+    <?!= include('scriptCalendario'); ?>
+    <?!= include('autocompletar'); ?>
+
+    <!-- FullCalendar -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fullcalendar/5.10.1/main.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fullcalendar/5.10.1/locales/es.js"></script>
+  </body>
+</html>

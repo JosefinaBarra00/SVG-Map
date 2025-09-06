@@ -1,0 +1,487 @@
+<script>
+/**
+ * App Initializer - Inicialización principal de la aplicación
+ */
+const AppInitializer = {
+  initialized: false,
+  
+  /**
+   * Inicializa la aplicación completa
+   */
+  init() {
+    if (this.initialized) {
+      console.log("Aplicación ya inicializada");
+      return;
+    }
+
+    console.log("Inicializando aplicación...");
+    
+    // Inicializar componentes en orden
+    this.initializeCore();
+    this.initializeUI();
+    this.initializeData();
+    this.setupGlobalFunctions();
+    
+    this.initialized = true;
+    console.log("Aplicación inicializada correctamente");
+  },
+
+  /**
+   * Inicializa componentes core
+   */
+  initializeCore() {
+    // Primero inicializar DataService
+    if (window.DataService) {
+      window.DataService.init();
+      console.log("DataService inicializado en initializeCore");
+    }
+    
+    // Inicializar gestores principales
+    if (window.DOMManager) {
+      window.DOMManager.init();
+    }
+    
+    if (window.SVGManager) {
+      window.SVGManager.init();
+    }
+  },
+
+  /**
+   * Inicializa componentes de UI
+   */
+  initializeUI() {
+    // Inicializar tooltips
+    if (window.TooltipManager) {
+      window.TooltipManager.init();
+    }
+    
+    // Inicializar modales
+    if (window.ModalManager) {
+      window.ModalManager.init();
+    }
+    
+    // Inicializar tabla
+    if (window.TableManager) {
+      window.TableManager.init();
+    }
+    
+    // Inicializar filtros
+    if (window.FilterManager) {
+      window.filterManager = new window.FilterManager();
+      console.log("FilterManager inicializado");
+    }
+    
+    // Inicializar navegación del mapa
+    if (window.MapNavigator) {
+      window.mapNavigator.init();
+      console.log("MapNavigator inicializado");
+    }
+  },
+
+  /**
+   * Inicializa componentes de datos
+   */
+  initializeData() {
+    // Inicializar selector de fuente de datos
+    if (window.DOMManager) {
+      window.DOMManager.initializeDataSourceSelector();
+    }
+    
+    // Cargar datos existentes automáticamente al inicializar
+    setTimeout(() => {
+      console.log("Cargando datos existentes al inicializar la aplicación...");
+      this.loadExistingData();
+    }, 1000);
+  },
+
+  /**
+   * Carga datos existentes desde Drive
+   */
+  async loadExistingData() {
+    console.log("Iniciando carga de datos existentes desde Drive...");
+    
+    try {
+      // Cargar datos de ubicaciones
+      await this.loadLocationDataFromDrive();
+      
+      // Cargar datos de vencimientos  
+      await this.loadExpiryDataFromDrive();
+      
+      // Cargar mapa de SKU
+      await this.loadSKUMapFromDrive();
+      
+      // Inicializar visualización con los datos cargados
+      await this.initializeVisualizationWithData();
+      
+      console.log("Datos existentes cargados exitosamente");
+    } catch (error) {
+      console.error("Error al cargar datos existentes:", error);
+      console.log("Continuando con inicialización normal...");
+    }
+  },
+
+  /**
+   * Carga datos de ubicaciones desde Drive
+   */
+  async loadLocationDataFromDrive() {
+    if (!window.DataService) return;
+    
+    try {
+      console.log("Cargando datos de ubicaciones...");
+      const datos = await new Promise((resolve, reject) => {
+        google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(reject)
+          .obtenerDatosUbicacionesParaUI();
+      });
+
+      if (datos && typeof datos === "object" && (datos.ocupacion || datos.vencimiento)) {
+        window.datosUbicaciones = datos;
+        console.log("Datos de ubicaciones cargados:", {
+          tieneOcupacion: !!datos.ocupacion,
+          tieneVencimiento: !!datos.vencimiento,
+          cantidadOcupacion: datos.ocupacion ? Object.keys(datos.ocupacion).length : 0,
+          cantidadVencimiento: datos.vencimiento ? Object.keys(datos.vencimiento).length : 0
+        });
+        
+        // Log de algunos datos de muestra para debugging
+        if (datos.ocupacion) {
+          const primerasUbicaciones = Object.keys(datos.ocupacion).slice(0, 3);
+          console.log("Muestra de datos de ocupación:", 
+            primerasUbicaciones.map(id => ({
+              id,
+              datos: datos.ocupacion[id]
+            }))
+          );
+        }
+      } else {
+        console.log("No se encontraron datos de ubicaciones válidos");
+      }
+    } catch (error) {
+      console.error("Error cargando datos de ubicaciones:", error);
+    }
+  },
+
+  /**
+   * Carga datos de vencimientos desde Drive  
+   */
+  async loadExpiryDataFromDrive() {
+    if (!window.DataService) return;
+    
+    try {
+      console.log("Cargando datos de vencimientos...");
+      const datos = await window.DataService.getExpiryData();
+      
+      if (datos && typeof datos === "object" && Object.keys(datos).length > 0) {
+        window.datosVencimientos = datos;
+        console.log(`Datos de vencimientos cargados: ${Object.keys(datos).length} fechas`);
+      } else {
+        console.log("No se encontraron datos de vencimientos válidos");
+      }
+    } catch (error) {
+      console.error("Error cargando datos de vencimientos:", error);
+    }
+  },
+
+  /**
+   * Carga mapa de SKU desde Drive
+   */
+  async loadSKUMapFromDrive() {
+    try {
+      console.log("Cargando mapa de SKU...");
+      const mapaSKU = await new Promise((resolve, reject) => {
+        google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(reject)
+          .obtenerMapaSKUAutomatico();
+      });
+      
+      if (mapaSKU && typeof mapaSKU === "object" && Object.keys(mapaSKU).length > 0) {
+        window.mapaSKU = mapaSKU;
+        console.log(`Mapa de SKU cargado: ${Object.keys(mapaSKU).length} SKUs`);
+      } else {
+        console.log("No se encontró mapa de SKU válido");
+      }
+    } catch (error) {
+      console.error("Error cargando mapa de SKU:", error);
+    }
+  },
+
+  /**
+   * Inicializa visualización con los datos cargados
+   */
+  async initializeVisualizationWithData() {
+    if (!window.datosUbicaciones) {
+      console.log("No hay datos de ubicaciones para inicializar visualización");
+      return;
+    }
+
+    console.log("Inicializando visualización con datos cargados...");
+    
+    // Aplicar colores al SVG
+    const tipoMapa = document.getElementById("tipoMapaSelector")?.value || "ocupacion";
+    
+    if (window.SVGManager) {
+      // Esperar un poco para que el SVG esté completamente cargado
+      setTimeout(() => {
+        window.SVGManager.applyColorsToSVG(tipoMapa, window.datosUbicaciones);
+      }, 500);
+    }
+
+    // Cargar tabla de vencimientos
+    if (window.TableManager) {
+      setTimeout(() => {
+        window.TableManager.showTopExpiries();
+      }, 1000);
+    }
+
+    // Cargar áreas disponibles
+    if (window.AreaManager) {
+      setTimeout(() => {
+        window.AreaManager.loadAvailableAreas();
+      }, 1500);
+    }
+
+    // Actualizar dashboard
+    setTimeout(() => {
+      if (window.actualizarDashboardCards) {
+        window.actualizarDashboardCards();
+      }
+    }, 2000);
+
+    // Cargar calendario
+    setTimeout(() => {
+      if (window.cargarCalendario) {
+        window.cargarCalendario();
+      }
+    }, 2500);
+  },
+
+  /**
+   * Configura funciones globales para compatibilidad
+   */
+  setupGlobalFunctions() {
+    // Función principal de actualización de dashboard cards
+    window.actualizarDashboardCards = () => {
+      this.updateDashboardCards();
+    };
+
+    // Función de inicialización de aplicación
+    window.inicializarAplicacion = () => {
+      console.log("Inicializando aplicación...");
+      
+      // Cargar SVG base inmediatamente (sin datos)
+      if (window.SVGManager) {
+        window.SVGManager.loadBaseSVG(false);
+      }
+      
+      // También intentar cargar datos si existen
+      setTimeout(() => {
+        console.log("Verificando si hay datos existentes...");
+        if (window.DataService && window.DataService.loadLocationData) {
+          window.DataService.loadLocationData();
+        }
+      }, 3000);
+    };
+
+    // Función de recarga completa
+    window.recargarAplicacion = () => {
+      this.reloadApplication();
+    };
+
+    // Función de carga de calendario
+    window.cargarCalendario = () => {
+      this.loadCalendar();
+    };
+  },
+
+  /**
+   * Actualiza cards del dashboard
+   */
+  updateDashboardCards() {
+    if (!window.datosUbicaciones || !window.datosUbicaciones.ocupacion) {
+      console.log("No hay datos de ubicaciones para actualizar cards");
+      return;
+    }
+
+    try {
+      const inventarioData = this.convertLocationDataToInventory(window.datosUbicaciones.ocupacion);
+      
+      if (window.calcularEstadisticasDesdeInventario) {
+        const estadisticas = window.calcularEstadisticasDesdeInventario(inventarioData);
+        
+        if (window.actualizarEstadisticas) {
+          window.actualizarEstadisticas(estadisticas);
+          console.log("Dashboard cards actualizados correctamente");
+        }
+      }
+    } catch (error) {
+      console.error("Error al actualizar dashboard cards:", error);
+    }
+  },
+
+  /**
+   * Convierte datos de ubicación a formato de inventario
+   */
+  convertLocationDataToInventory(datosOcupacion) {
+    const inventarioArray = [];
+    
+    Object.entries(datosOcupacion).forEach(([ubicacion, datos]) => {
+      // Formato simulado de inventario para cálculo de estadísticas
+      const fila = new Array(15).fill(""); // Array con 15 columnas
+      fila[2] = ubicacion; // Columna ubicación
+      fila[6] = datos.utilizado || 0; // Columna cantidad (usar 'utilizado' en lugar de 'cantidadTotal')
+      fila[12] = 365; // Columna días hasta caducidad (valor por defecto, no existe en datos de ocupación)
+      
+      inventarioArray.push(fila);
+    });
+    
+    return inventarioArray;
+  },
+
+  /**
+   * Recarga toda la aplicación
+   */
+  reloadApplication() {
+    console.log("Recargando aplicación completa...");
+    
+    // Recargar datos
+    if (window.DataService) {
+      window.DataService.loadLocationData();
+    }
+    
+    // Recargar SVG
+    if (window.SVGManager) {
+      window.SVGManager.loadBaseSVG(true);
+    }
+    
+    // Recargar áreas
+    setTimeout(() => {
+      if (window.AreaManager) {
+        window.AreaManager.reload();
+      }
+    }, 1000);
+    
+    // Recargar tabla
+    setTimeout(() => {
+      if (window.TableManager) {
+        window.TableManager.reload();
+      }
+    }, 2000);
+    
+    console.log("Recarga de aplicación completada");
+  },
+
+  /**
+   * Maneja errores globales
+   */
+  handleError(error, context = "aplicación") {
+    console.error(`Error en ${context}:`, error);
+    
+    // Mostrar mensaje de error al usuario si es necesario
+    if (window.DOMManager) {
+      window.DOMManager.showErrorMessage(`Error en ${context}: ${error.message}`);
+    }
+  },
+
+  /**
+   * Verifica estado de la aplicación
+   */
+  checkApplicationHealth() {
+    const components = [
+      'DOMManager',
+      'SVGManager', 
+      'TooltipManager',
+      'ModalManager',
+      'TableManager',
+      'FilterManager',
+      'DataService',
+      'AreaManager',
+      'MapNavigator'
+    ];
+    
+    const functions = [
+      'cargarDatosUbicaciones',
+      'cargarCalendario',
+      'actualizarDashboardCards',
+      'inicializarCalendario',
+      'convertirVencimientosAEventos'
+    ];
+    
+    const status = {};
+    components.forEach(component => {
+      status[component] = window[component] ? 'OK' : 'NOT_LOADED';
+    });
+    
+    functions.forEach(func => {
+      status[func] = typeof window[func] === 'function' ? 'OK' : 'NOT_LOADED';
+    });
+    
+    console.log("Estado de componentes y funciones:", status);
+    return status;
+  },
+
+  /**
+   * Carga el calendario
+   */
+  loadCalendar() {
+    console.log("Cargando calendario...");
+    
+    // Cargar datos de vencimientos primero
+    if (window.DataService) {
+      window.DataService.getExpiryData()
+        .then((datos) => {
+          console.log("Datos de vencimientos recibidos:", datos);
+          if (datos) {
+            window.datosVencimientos = datos;
+            console.log("Estructura de datosVencimientos:", {
+              tipo: typeof datos,
+              esArray: Array.isArray(datos),
+              cantidadKeys: typeof datos === 'object' ? Object.keys(datos).length : 0,
+              primeraKey: typeof datos === 'object' ? Object.keys(datos)[0] : null
+            });
+            
+            // Inicializar calendario si la función existe
+            if (window.inicializarCalendario) {
+              setTimeout(() => {
+                window.inicializarCalendario();
+              }, 100);
+            }
+          } else {
+            console.log("No hay datos de vencimientos disponibles");
+          }
+        })
+        .catch((error) => {
+          console.error("Error al cargar datos de vencimientos:", error);
+        });
+    }
+  },
+
+  /**
+   * Limpia la aplicación
+   */
+  cleanup() {
+    console.log("Limpiando aplicación...");
+    
+    // Limpiar event listeners si es necesario
+    // Limpiar timers/intervalos si los hay
+    // Resetear estados globales
+    
+    this.initialized = false;
+  }
+};
+
+// Auto-inicializar cuando el DOM esté listo
+document.addEventListener("DOMContentLoaded", function() {
+  // Esperar un poco para que todos los componentes se carguen
+  setTimeout(() => {
+    AppInitializer.init();
+  }, 100);
+});
+
+// Exportar para uso global
+window.AppInitializer = AppInitializer;
+
+// Mantener compatibilidad con funciones existentes
+window.inicializarAplicacion = () => AppInitializer.init();
+</script>

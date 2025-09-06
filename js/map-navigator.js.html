@@ -1,0 +1,379 @@
+<script>
+/**
+ * Map Navigator - Maneja navegación del mapa SVG: zoom, pan y fullscreen
+ */
+class MapNavigator {
+  constructor() {
+    this.svgContainer = null;
+    this.svg = null;
+    this.currentZoom = 1;
+    this.minZoom = 0.5;
+    this.maxZoom = 5;
+    this.zoomStep = 0.2;
+    this.isPanning = false;
+    this.panStart = { x: 0, y: 0 };
+    this.currentPan = { x: 0, y: 0 };
+    this.isFullscreen = false;
+    
+    // Bind methods
+    this.handleMouseDown = this.handleMouseDown.bind(this);
+    this.handleMouseMove = this.handleMouseMove.bind(this);
+    this.handleMouseUp = this.handleMouseUp.bind(this);
+    this.handleWheel = this.handleWheel.bind(this);
+    this.handleDoubleClick = this.handleDoubleClick.bind(this);
+    this.handleKeyDown = this.handleKeyDown.bind(this);
+    this.handleFullscreenChange = this.handleFullscreenChange.bind(this);
+  }
+
+  init() {
+    this.svgContainer = document.getElementById('svg-container');
+    if (!this.svgContainer) {
+      console.error('MapNavigator: svg-container no encontrado');
+      return;
+    }
+
+    this.setupEventListeners();
+    this.setupControlButtons();
+    
+    // Observar cambios en el SVG
+    this.observeSVGChanges();
+    
+    console.log('MapNavigator inicializado');
+  }
+
+  observeSVGChanges() {
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.type === 'childList') {
+          const addedNodes = Array.from(mutation.addedNodes);
+          const svgAdded = addedNodes.find(node => 
+            node.tagName && node.tagName.toLowerCase() === 'svg'
+          );
+          
+          if (svgAdded) {
+            this.svg = svgAdded;
+            this.setupSVGEvents();
+            console.log('SVG detectado y configurado para navegación');
+          }
+        }
+      });
+    });
+
+    observer.observe(this.svgContainer, {
+      childList: true,
+      subtree: true
+    });
+  }
+
+  setupEventListeners() {
+    // Eventos del contenedor
+    this.svgContainer.addEventListener('wheel', this.handleWheel, { passive: false });
+    this.svgContainer.addEventListener('dblclick', this.handleDoubleClick);
+    
+    // Eventos de teclado
+    document.addEventListener('keydown', this.handleKeyDown);
+    
+    // Eventos de fullscreen
+    document.addEventListener('fullscreenchange', this.handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', this.handleFullscreenChange);
+    document.addEventListener('mozfullscreenchange', this.handleFullscreenChange);
+    document.addEventListener('msfullscreenchange', this.handleFullscreenChange);
+  }
+
+  setupSVGEvents() {
+    if (!this.svg) return;
+
+    // Eventos de mouse para pan
+    this.svg.addEventListener('mousedown', this.handleMouseDown);
+    document.addEventListener('mousemove', this.handleMouseMove);
+    document.addEventListener('mouseup', this.handleMouseUp);
+    
+    // Configurar cursor inicial
+    this.svg.style.cursor = 'grab';
+  }
+
+  setupControlButtons() {
+    // Botón de pantalla completa
+    const fullscreenBtn = document.getElementById('fullscreen-btn');
+    if (fullscreenBtn) {
+      fullscreenBtn.addEventListener('click', () => this.toggleFullscreen());
+    }
+
+    // Botón zoom in
+    const zoomInBtn = document.getElementById('zoom-in-btn');
+    if (zoomInBtn) {
+      zoomInBtn.addEventListener('click', () => this.zoomIn());
+    }
+
+    // Botón zoom out
+    const zoomOutBtn = document.getElementById('zoom-out-btn');
+    if (zoomOutBtn) {
+      zoomOutBtn.addEventListener('click', () => this.zoomOut());
+    }
+
+    // Botón reset
+    const resetBtn = document.getElementById('reset-zoom-btn');
+    if (resetBtn) {
+      resetBtn.addEventListener('click', () => this.resetView());
+    }
+  }
+
+  // === ZOOM FUNCTIONALITY ===
+  zoomIn() {
+    this.zoom(this.currentZoom + this.zoomStep);
+  }
+
+  zoomOut() {
+    this.zoom(this.currentZoom - this.zoomStep);
+  }
+
+  zoom(newZoom, centerX = null, centerY = null) {
+    if (!this.svg) return;
+
+    // Clamp zoom level
+    newZoom = Math.max(this.minZoom, Math.min(this.maxZoom, newZoom));
+    
+    if (newZoom === this.currentZoom) return;
+
+    // Si no se especifica centro, usar el centro del contenedor
+    if (centerX === null || centerY === null) {
+      const rect = this.svgContainer.getBoundingClientRect();
+      centerX = rect.width / 2;
+      centerY = rect.height / 2;
+    }
+
+    // Calcular nuevo pan para mantener el punto central
+    const zoomRatio = newZoom / this.currentZoom;
+    const deltaX = (centerX - this.currentPan.x) * (zoomRatio - 1);
+    const deltaY = (centerY - this.currentPan.y) * (zoomRatio - 1);
+
+    this.currentPan.x -= deltaX;
+    this.currentPan.y -= deltaY;
+    this.currentZoom = newZoom;
+
+    this.updateTransform();
+    this.updateZoomButtons();
+  }
+
+  // === PAN FUNCTIONALITY ===
+  handleMouseDown(e) {
+    if (e.button !== 0) return; // Solo botón izquierdo
+    
+    this.isPanning = true;
+    this.panStart.x = e.clientX - this.currentPan.x;
+    this.panStart.y = e.clientY - this.currentPan.y;
+    
+    if (this.svg) {
+      this.svg.style.cursor = 'grabbing';
+    }
+    
+    e.preventDefault();
+  }
+
+  handleMouseMove(e) {
+    if (!this.isPanning || !this.svg) return;
+
+    this.currentPan.x = e.clientX - this.panStart.x;
+    this.currentPan.y = e.clientY - this.panStart.y;
+
+    this.updateTransform();
+    e.preventDefault();
+  }
+
+  handleMouseUp(e) {
+    if (!this.isPanning) return;
+    
+    this.isPanning = false;
+    
+    if (this.svg) {
+      this.svg.style.cursor = 'grab';
+    }
+  }
+
+  // === WHEEL ZOOM ===
+  handleWheel(e) {
+    if (!this.svg) return;
+
+    e.preventDefault();
+    
+    const rect = this.svgContainer.getBoundingClientRect();
+    const centerX = e.clientX - rect.left;
+    const centerY = e.clientY - rect.top;
+
+    const zoomDelta = e.deltaY > 0 ? -this.zoomStep : this.zoomStep;
+    this.zoom(this.currentZoom + zoomDelta, centerX, centerY);
+  }
+
+  // === DOUBLE CLICK ZOOM ===
+  handleDoubleClick(e) {
+    if (!this.svg) return;
+
+    const rect = this.svgContainer.getBoundingClientRect();
+    const centerX = e.clientX - rect.left;
+    const centerY = e.clientY - rect.top;
+
+    // Zoom in si está lejos, zoom out si está cerca
+    const targetZoom = this.currentZoom < 2 ? 2 : 1;
+    this.zoom(targetZoom, centerX, centerY);
+  }
+
+  // === KEYBOARD SHORTCUTS ===
+  handleKeyDown(e) {
+    if (!this.svg) return;
+
+    // Solo activar si el mapa tiene focus o no hay input activo
+    const activeElement = document.activeElement;
+    if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
+      return;
+    }
+
+    switch (e.key) {
+      case '+':
+      case '=':
+        this.zoomIn();
+        e.preventDefault();
+        break;
+      case '-':
+        this.zoomOut();
+        e.preventDefault();
+        break;
+      case '0':
+        this.resetView();
+        e.preventDefault();
+        break;
+      case 'f':
+      case 'F':
+        this.toggleFullscreen();
+        e.preventDefault();
+        break;
+    }
+  }
+
+  // === FULLSCREEN FUNCTIONALITY ===
+  toggleFullscreen() {
+    if (this.isFullscreen) {
+      this.exitFullscreen();
+    } else {
+      this.enterFullscreen();
+    }
+  }
+
+  enterFullscreen() {
+    const element = this.svgContainer;
+    
+    if (element.requestFullscreen) {
+      element.requestFullscreen();
+    } else if (element.webkitRequestFullscreen) {
+      element.webkitRequestFullscreen();
+    } else if (element.mozRequestFullScreen) {
+      element.mozRequestFullScreen();
+    } else if (element.msRequestFullscreen) {
+      element.msRequestFullscreen();
+    }
+  }
+
+  exitFullscreen() {
+    if (document.exitFullscreen) {
+      document.exitFullscreen();
+    } else if (document.webkitExitFullscreen) {
+      document.webkitExitFullscreen();
+    } else if (document.mozCancelFullScreen) {
+      document.mozCancelFullScreen();
+    } else if (document.msExitFullscreen) {
+      document.msExitFullscreen();
+    }
+  }
+
+  handleFullscreenChange() {
+    this.isFullscreen = !!(
+      document.fullscreenElement ||
+      document.webkitFullscreenElement ||
+      document.mozFullScreenElement ||
+      document.msFullscreenElement
+    );
+
+    // Actualizar estilos del contenedor en fullscreen
+    if (this.isFullscreen) {
+      this.svgContainer.classList.add('fullscreen-active');
+    } else {
+      this.svgContainer.classList.remove('fullscreen-active');
+    }
+
+    // Actualizar icono del botón
+    this.updateFullscreenButton();
+    
+    console.log('Fullscreen:', this.isFullscreen);
+  }
+
+  // === TRANSFORM UPDATE ===
+  updateTransform() {
+    if (!this.svg) return;
+
+    const transform = `translate(${this.currentPan.x}px, ${this.currentPan.y}px) scale(${this.currentZoom})`;
+    this.svg.style.transform = transform;
+  }
+
+  // === RESET VIEW ===
+  resetView() {
+    this.currentZoom = 1;
+    this.currentPan = { x: 0, y: 0 };
+    this.updateTransform();
+    this.updateZoomButtons();
+  }
+
+  // === UI UPDATES ===
+  updateZoomButtons() {
+    const zoomInBtn = document.getElementById('zoom-in-btn');
+    const zoomOutBtn = document.getElementById('zoom-out-btn');
+    const zoomIndicator = document.getElementById('zoom-indicator');
+
+    if (zoomInBtn) {
+      zoomInBtn.disabled = this.currentZoom >= this.maxZoom;
+    }
+    
+    if (zoomOutBtn) {
+      zoomOutBtn.disabled = this.currentZoom <= this.minZoom;
+    }
+
+    if (zoomIndicator) {
+      zoomIndicator.textContent = Math.round(this.currentZoom * 100) + '%';
+    }
+  }
+
+  updateFullscreenButton() {
+    const fullscreenBtn = document.getElementById('fullscreen-btn');
+    if (fullscreenBtn) {
+      const icon = fullscreenBtn.querySelector('span');
+      if (icon) {
+        icon.textContent = this.isFullscreen ? '⛉' : '⛶';
+      }
+      fullscreenBtn.title = this.isFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa';
+    }
+  }
+
+  // === PUBLIC API ===
+  getCurrentZoom() {
+    return this.currentZoom;
+  }
+
+  getCurrentPan() {
+    return { ...this.currentPan };
+  }
+
+  setZoom(zoom) {
+    this.zoom(zoom);
+  }
+
+  setPan(x, y) {
+    this.currentPan.x = x;
+    this.currentPan.y = y;
+    this.updateTransform();
+  }
+}
+
+// Crear instancia global
+window.MapNavigator = MapNavigator;
+window.mapNavigator = new MapNavigator();
+
+console.log('MapNavigator class definida');
+</script>

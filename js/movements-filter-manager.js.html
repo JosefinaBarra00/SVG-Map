@@ -1,0 +1,457 @@
+<script>
+/**
+ * Movements Filter Manager - Manejo de filtros específicos para movimientos
+ */
+class MovementsFilterManager {
+  constructor() {
+    this.filtrosActivos = {};
+    this.ubicacionesFiltradas = [];
+    this.init();
+  }
+
+  init() {
+    this.setupElements();
+    this.setupEventListeners();
+  }
+
+  setupElements() {
+    this.elements = {
+      filtroOperacion: document.getElementById('filtro-operacion'),
+      filtroFrecuencia: document.getElementById('filtro-frecuencia'),
+      filtroUmbral: document.getElementById('filtro-umbral'),
+      filtroDiaSemana: document.getElementById('filtro-dia-semana'),
+      btnFiltrar: document.getElementById('btn-filtrar-movimientos'),
+      btnLimpiar: document.getElementById('btn-limpiar-movimientos'),
+      resultadoFiltro: document.getElementById('resultado-filtro-movimientos'),
+      filtroSummary: document.getElementById('movements-filter-summary')
+    };
+  }
+
+  setupEventListeners() {
+    if (this.elements.btnFiltrar) {
+      this.elements.btnFiltrar.addEventListener('click', () => this.aplicarFiltros());
+    }
+
+    if (this.elements.btnLimpiar) {
+      this.elements.btnLimpiar.addEventListener('click', () => this.limpiarFiltros());
+    }
+
+    // Botón de análisis de patrones
+    const btnAnalizar = document.getElementById('btn-analizar-patrones');
+    if (btnAnalizar) {
+      btnAnalizar.addEventListener('click', () => this.generarAnalisisPatrones());
+    }
+
+    // Auto-aplicar filtros cuando cambian los valores
+    Object.values(this.elements).forEach(element => {
+      if (element && (element.tagName === 'SELECT' || element.tagName === 'INPUT')) {
+        element.addEventListener('change', () => {
+          setTimeout(() => this.aplicarFiltros(), 100);
+        });
+      }
+    });
+  }
+
+  aplicarFiltros() {
+    if (!window.datosUbicaciones || !window.datosUbicaciones.movimientos) {
+      this.mostrarError('No hay datos de movimientos cargados');
+      return;
+    }
+
+    // Recopilar filtros activos
+    this.filtrosActivos = {
+      operacion: this.elements.filtroOperacion?.value || '',
+      frecuencia: this.elements.filtroFrecuencia?.value || '',
+      umbral: parseInt(this.elements.filtroUmbral?.value) || 0,
+      diaSemana: this.elements.filtroDiaSemana?.value || ''
+    };
+
+    // Aplicar filtros a los datos
+    this.ubicacionesFiltradas = this.filtrarUbicaciones();
+
+    // Actualizar visualización
+    this.actualizarVisualizacion();
+
+    // Mostrar resumen
+    this.mostrarResumen();
+  }
+
+  filtrarUbicaciones() {
+    const movimientos = window.datosUbicaciones.movimientos;
+    const ubicacionesFiltradas = [];
+
+    Object.keys(movimientos).forEach(ubicacionId => {
+      const datos = movimientos[ubicacionId];
+      
+      if (this.cumpleFiltros(ubicacionId, datos)) {
+        ubicacionesFiltradas.push(ubicacionId);
+      }
+    });
+
+    return ubicacionesFiltradas;
+  }
+
+  cumpleFiltros(ubicacionId, datos) {
+    // Filtro por tipo de operación
+    if (this.filtrosActivos.operacion) {
+      const tieneOperacion = datos.detalleMovimientos?.some(mov => 
+        mov.operacion === this.filtrosActivos.operacion
+      );
+      if (!tieneOperacion) return false;
+    }
+
+    // Filtro por rango de frecuencia
+    if (this.filtrosActivos.frecuencia) {
+      const tipoMovimiento = document.getElementById('tipoMovimientoSubSelector')?.value || 'salidas';
+      const frecuencia = tipoMovimiento === 'salidas' ? datos.salidas : datos.entradas;
+      const percentil = tipoMovimiento === 'salidas' ? datos.percentilSalidas : datos.percentilEntradas;
+      
+      if (!this.cumpleRangoFrecuencia(frecuencia, percentil)) {
+        return false;
+      }
+    }
+
+    // Filtro por umbral mínimo
+    if (this.filtrosActivos.umbral > 0) {
+      const tipoMovimiento = document.getElementById('tipoMovimientoSubSelector')?.value || 'salidas';
+      const frecuencia = tipoMovimiento === 'salidas' ? datos.salidas : datos.entradas;
+      
+      if (frecuencia < this.filtrosActivos.umbral) {
+        return false;
+      }
+    }
+
+    // Filtro por día de la semana
+    if (this.filtrosActivos.diaSemana) {
+      const tieneDia = datos.detalleMovimientos?.some(mov => {
+        const fecha = new Date(mov.fecha.split('/').reverse().join('-'));
+        return fecha.getDay().toString() === this.filtrosActivos.diaSemana;
+      });
+      if (!tieneDia) return false;
+    }
+
+    return true;
+  }
+
+  cumpleRangoFrecuencia(frecuencia, percentil) {
+    switch (this.filtrosActivos.frecuencia) {
+      case 'alta':
+        return percentil >= 75;
+      case 'media':
+        return percentil >= 50 && percentil < 75;
+      case 'baja':
+        return percentil >= 25 && percentil < 50;
+      case 'minima':
+        return percentil > 0 && percentil < 25;
+      case 'sin-movimiento':
+        return frecuencia === 0;
+      default:
+        return true;
+    }
+  }
+
+  actualizarVisualizacion() {
+    // Resetear colores del mapa
+    this.resetearColoresMapa();
+
+    // Aplicar colores solo a ubicaciones filtradas
+    if (this.ubicacionesFiltradas.length > 0) {
+      this.resaltarUbicacionesFiltradas();
+    }
+  }
+
+  resetearColoresMapa() {
+    const svgContainer = document.getElementById('svg-container');
+    if (!svgContainer) return;
+
+    const elementos = svgContainer.querySelectorAll('rect[id], g[id]');
+    elementos.forEach(elemento => {
+      if (elemento.id) {
+        // Aplicar color atenuado para ubicaciones no filtradas
+        elemento.style.opacity = '0.3';
+        elemento.style.stroke = '#ccc';
+        elemento.style.strokeWidth = '0.5';
+      }
+    });
+  }
+
+  resaltarUbicacionesFiltradas() {
+    const movimientos = window.datosUbicaciones.movimientos;
+    const tipoMovimiento = document.getElementById('tipoMovimientoSubSelector')?.value || 'salidas';
+
+    this.ubicacionesFiltradas.forEach(ubicacionId => {
+      const elemento = document.getElementById(ubicacionId);
+      if (elemento && movimientos[ubicacionId]) {
+        const datos = movimientos[ubicacionId];
+        
+        // Restaurar opacidad y aplicar color original
+        elemento.style.opacity = '1';
+        elemento.style.stroke = '#000';
+        elemento.style.strokeWidth = '2';
+        
+        // Aplicar color según tipo de movimiento
+        const color = tipoMovimiento === 'salidas' ? 
+          datos.colorSalidas : datos.colorEntradas;
+        
+        if (color) {
+          elemento.setAttribute('fill', color);
+          elemento.style.fill = color;
+        }
+      }
+    });
+  }
+
+  mostrarResumen() {
+    const total = Object.keys(window.datosUbicaciones.movimientos || {}).length;
+    const filtradas = this.ubicacionesFiltradas.length;
+    const porcentaje = total > 0 ? Math.round((filtradas / total) * 100) : 0;
+
+    let mensaje = `Mostrando ${filtradas} de ${total} ubicaciones (${porcentaje}%)`;
+
+    // Agregar detalles de filtros activos
+    const filtrosTexto = [];
+    if (this.filtrosActivos.operacion) {
+      filtrosTexto.push(`Operación: ${this.filtrosActivos.operacion}`);
+    }
+    if (this.filtrosActivos.frecuencia) {
+      filtrosTexto.push(`Frecuencia: ${this.filtrosActivos.frecuencia}`);
+    }
+    if (this.filtrosActivos.umbral > 0) {
+      filtrosTexto.push(`Mínimo ${this.filtrosActivos.umbral} movimientos`);
+    }
+    if (this.filtrosActivos.diaSemana) {
+      const dias = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+      filtrosTexto.push(`Día: ${dias[parseInt(this.filtrosActivos.diaSemana)]}`);
+    }
+
+    if (filtrosTexto.length > 0) {
+      mensaje += `<br><small>Filtros: ${filtrosTexto.join(', ')}</small>`;
+    }
+
+    this.elements.filtroSummary.innerHTML = mensaje;
+    this.elements.resultadoFiltro.classList.remove('hidden');
+  }
+
+  limpiarFiltros() {
+    // Resetear elementos del formulario
+    Object.values(this.elements).forEach(element => {
+      if (element && element.tagName === 'SELECT') {
+        element.selectedIndex = 0;
+      } else if (element && element.tagName === 'INPUT') {
+        element.value = '';
+      }
+    });
+
+    // Limpiar filtros activos
+    this.filtrosActivos = {};
+    this.ubicacionesFiltradas = [];
+
+    // Ocultar resultados
+    this.elements.resultadoFiltro.classList.add('hidden');
+
+    // Restaurar visualización completa
+    this.restaurarVisualizacionCompleta();
+  }
+
+  restaurarVisualizacionCompleta() {
+    const svgContainer = document.getElementById('svg-container');
+    if (!svgContainer) return;
+
+    const elementos = svgContainer.querySelectorAll('rect[id], g[id]');
+    elementos.forEach(elemento => {
+      if (elemento.id) {
+        elemento.style.opacity = '1';
+        elemento.style.stroke = '';
+        elemento.style.strokeWidth = '';
+      }
+    });
+
+    // Reaplicar colores originales de movimientos
+    if (window.SVGManager && window.datosUbicaciones) {
+      window.SVGManager.applyColorsToSVG('movimientos', window.datosUbicaciones);
+    }
+  }
+
+  mostrarError(mensaje) {
+    this.elements.filtroSummary.innerHTML = `<span style="color: red;">Error: ${mensaje}</span>`;
+    this.elements.resultadoFiltro.classList.remove('hidden');
+  }
+
+  generarAnalisisPatrones() {
+    if (!window.MovementsAnalytics) {
+      this.mostrarError('Módulo de análisis no disponible');
+      return;
+    }
+
+    if (!window.datosUbicaciones?.movimientos) {
+      this.mostrarError('No hay datos de movimientos para analizar');
+      return;
+    }
+
+    try {
+      // Generar reporte completo
+      const reporte = window.MovementsAnalytics.generarReporteCompleto();
+      const textoReporte = window.MovementsAnalytics.exportarReporteTexto(reporte);
+      
+      // Mostrar en modal o nueva ventana
+      this.mostrarReporteAnalisis(textoReporte, reporte);
+      
+    } catch (error) {
+      this.mostrarError(`Error generando análisis: ${error.message}`);
+    }
+  }
+
+  mostrarReporteAnalisis(textoReporte, reporte) {
+    // Crear modal para mostrar el reporte
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.8);
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    `;
+
+    const contenido = document.createElement('div');
+    contenido.style.cssText = `
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      max-width: 800px;
+      max-height: 80vh;
+      overflow-y: auto;
+      position: relative;
+    `;
+
+    contenido.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h2 style="margin: 0; color: #333;">📊 Análisis de Patrones de Movimientos</h2>
+        <button id="cerrar-reporte" style="background: #dc3545; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer;">✕ Cerrar</button>
+      </div>
+      
+      <div style="background: #f8f9fa; padding: 15px; border-radius: 4px; margin-bottom: 15px;">
+        <h3 style="margin-top: 0; color: #007bff;">Eficiencia General</h3>
+        <div style="font-size: 24px; font-weight: bold; color: ${reporte.eficiencia.eficiencia >= 0.7 ? '#28a745' : reporte.eficiencia.eficiencia >= 0.5 ? '#ffc107' : '#dc3545'};">
+          ${(reporte.eficiencia.eficiencia * 100).toFixed(1)}%
+        </div>
+        <p style="margin: 5px 0 0 0;">${reporte.eficiencia.mensaje}</p>
+      </div>
+
+      ${reporte.patrones.patrones.length > 0 ? `
+      <div style="background: #fff3cd; padding: 15px; border-radius: 4px; margin-bottom: 15px; border-left: 4px solid #ffc107;">
+        <h3 style="margin-top: 0; color: #856404;">Patrones Detectados (${reporte.patrones.patrones.length})</h3>
+        <div style="max-height: 200px; overflow-y: auto;">
+          ${reporte.patrones.patrones.slice(0, 10).map(patron => `
+            <div style="margin-bottom: 10px; padding: 8px; background: white; border-radius: 3px;">
+              <strong>${patron.ubicacion}</strong> - ${patron.descripcion}<br>
+              <small>Salidas: ${patron.salidas}, Entradas: ${patron.entradas} | Severidad: ${patron.severidad}</small>
+            </div>
+          `).join('')}
+          ${reporte.patrones.patrones.length > 10 ? `<p><em>... y ${reporte.patrones.patrones.length - 10} más</em></p>` : ''}
+        </div>
+      </div>
+      ` : ''}
+
+      ${reporte.recomendaciones.length > 0 ? `
+      <div style="background: #d1ecf1; padding: 15px; border-radius: 4px; margin-bottom: 15px; border-left: 4px solid #bee5eb;">
+        <h3 style="margin-top: 0; color: #0c5460;">Recomendaciones (${reporte.recomendaciones.length})</h3>
+        ${reporte.recomendaciones.map(rec => `
+          <div style="margin-bottom: 10px; padding: 8px; background: white; border-radius: 3px;">
+            <strong>[${rec.prioridad.toUpperCase()}]</strong> ${rec.descripcion}<br>
+            <small><em>Acción sugerida:</em> ${rec.accion}</small>
+          </div>
+        `).join('')}
+      </div>
+      ` : ''}
+
+      <div style="text-align: center; margin-top: 20px;">
+        <button id="exportar-reporte" style="background: #28a745; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; margin-right: 10px;">
+          📄 Exportar Reporte Completo
+        </button>
+        <button id="aplicar-filtros-recomendados" style="background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer;">
+          🎯 Aplicar Filtros Recomendados
+        </button>
+      </div>
+    `;
+
+    modal.appendChild(contenido);
+    document.body.appendChild(modal);
+
+    // Event listeners
+    document.getElementById('cerrar-reporte').onclick = () => {
+      document.body.removeChild(modal);
+    };
+
+    document.getElementById('exportar-reporte').onclick = () => {
+      const blob = new Blob([textoReporte], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `analisis_movimientos_${new Date().toISOString().split('T')[0]}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+
+    document.getElementById('aplicar-filtros-recomendados').onclick = () => {
+      this.aplicarFiltrosRecomendados(reporte);
+      document.body.removeChild(modal);
+    };
+
+    // Cerrar con ESC
+    const handleEsc = (e) => {
+      if (e.key === 'Escape') {
+        document.body.removeChild(modal);
+        document.removeEventListener('keydown', handleEsc);
+      }
+    };
+    document.addEventListener('keydown', handleEsc);
+  }
+
+  aplicarFiltrosRecomendados(reporte) {
+    // Aplicar filtros basados en las recomendaciones
+    const patronesAltos = reporte.patrones.patrones.filter(p => p.severidad === 'alta');
+    
+    if (patronesAltos.length > 0) {
+      // Filtrar para mostrar solo ubicaciones con actividad crítica
+      this.elements.filtroFrecuencia.value = 'alta';
+      this.aplicarFiltros();
+      
+      this.elements.filtroSummary.innerHTML = `
+        Filtros aplicados basados en análisis: mostrando ubicaciones con actividad crítica<br>
+        <small>Se detectaron ${patronesAltos.length} ubicaciones que requieren atención</small>
+      `;
+      this.elements.resultadoFiltro.classList.remove('hidden');
+    }
+  }
+
+  // Método público para obtener ubicaciones filtradas
+  getUbicacionesFiltradas() {
+    return this.ubicacionesFiltradas;
+  }
+
+  // Método público para verificar si hay filtros activos
+  tieneFiltrosActivos() {
+    return Object.values(this.filtrosActivos).some(valor => 
+      valor !== '' && valor !== 0 && valor !== undefined
+    );
+  }
+}
+
+// Instancia global
+let movementsFilterManager;
+
+// Inicializar cuando el DOM esté listo
+document.addEventListener('DOMContentLoaded', function() {
+  movementsFilterManager = new MovementsFilterManager();
+});
+
+// Exportar para uso global
+window.MovementsFilterManager = MovementsFilterManager;
+window.movementsFilterManager = movementsFilterManager;
+</script>

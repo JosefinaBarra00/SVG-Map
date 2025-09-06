@@ -1,0 +1,272 @@
+<script>
+  /**
+   * Utilidades generales de la aplicación
+   */
+  const Utils = {
+    /**
+     * Debounce para optimizar llamadas a funciones
+     */
+    debounce(func, wait) {
+      let timeout;
+      return function executedFunction(...args) {
+        const later = () => {
+          clearTimeout(timeout);
+          func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+      };
+    },
+
+    /**
+     * Formatea una fecha en formato legible
+     */
+    formatDate(date) {
+      if (!date) return "Sin fecha";
+      const d = new Date(date);
+      if (isNaN(d.getTime())) return "Fecha inválida";
+
+      const options = {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      };
+      return d.toLocaleDateString("es-CL", options);
+    },
+
+    /**
+     * Calcula días hasta una fecha
+     */
+    getDaysUntil(targetDate) {
+      if (!targetDate) return null;
+
+      const target = new Date(targetDate);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const diffTime = target - today;
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+      return diffDays;
+    },
+
+    /**
+     * Formatea números con separadores de miles
+     */
+    formatNumber(num) {
+      if (num === null || num === undefined) return "0";
+      return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+    },
+
+    /**
+     * Calcula porcentaje
+     */
+    calculatePercentage(value, total) {
+      if (!total || total === 0) return 0;
+      return Math.round((value / total) * 100);
+    },
+
+    /**
+     * Calcula ocupación correcta basada en nomenclatura de ubicaciones
+     * A01-02-03-04 -> ubicacion: A01-02, nivel: 03, subdivision: 04
+     */
+    calculateCorrectOccupancy(ubicacionId, datosUbicacion) {
+      // Parsear nomenclatura: A01-02-03-04 -> ubicacion: A01-02, nivel: 03, subdivision: 04
+      const partes = ubicacionId.split('-');
+      const esUbicacionConNiveles = partes.length > 2;
+      
+      // Debug: log para entender la estructura
+      console.log('Calculando ocupación para:', ubicacionId, {
+        partes: partes,
+        esUbicacionConNiveles: esUbicacionConNiveles,
+        tieneNiveles: !!datosUbicacion.niveles,
+        niveles: datosUbicacion.niveles ? Object.keys(datosUbicacion.niveles) : [],
+        utilizado: datosUbicacion.utilizado,
+        capacidad: datosUbicacion.capacidad_maxima,
+        datosCompletos: datosUbicacion
+      });
+      
+      // Verificar si realmente tiene estructura de niveles
+      const tieneEstructuraNiveles = datosUbicacion.niveles && 
+        Object.keys(datosUbicacion.niveles).length > 0 &&
+        esUbicacionConNiveles;
+      
+      if (tieneEstructuraNiveles) {
+        // Calcular ocupación por niveles
+        const nivelesOcupados = Object.keys(datosUbicacion.niveles).filter(nivelId => {
+          const nivel = datosUbicacion.niveles[nivelId];
+          return nivel.skus && Object.keys(nivel.skus).length > 0;
+        }).length;
+        
+        const nivelesDisponibles = Object.keys(datosUbicacion.niveles).length;
+        
+        // Validar que los números sean lógicos
+        if (nivelesOcupados > nivelesDisponibles) {
+          console.warn('Datos inconsistentes: más niveles ocupados que disponibles', {
+            ubicacion: ubicacionId,
+            ocupados: nivelesOcupados,
+            disponibles: nivelesDisponibles
+          });
+        }
+        
+        console.log(`Ocupación por NIVELES para ${ubicacionId}: ${nivelesOcupados}/${nivelesDisponibles} = ${Math.round((nivelesOcupados / nivelesDisponibles) * 100)}%`);
+        
+        return {
+          porcentaje: nivelesDisponibles > 0 ? Math.round((nivelesOcupados / nivelesDisponibles) * 100) : 0,
+          ocupado: nivelesOcupados,
+          total: nivelesDisponibles,
+          tipo: 'niveles'
+        };
+      } else {
+        // Calcular ocupación directa (capacidad vs ocupado)
+        const utilizado = datosUbicacion.utilizado || 0;
+        const capacidad = datosUbicacion.capacidad_maxima || 0;
+        
+        // CORRECCIÓN: Si los datos están inconsistentes, intentar usar capacidad real
+        let capacidadReal = capacidad;
+        let utilizadoReal = utilizado;
+        
+        // Si utilizado > capacidad, verificar si hay información de niveles para corregir
+        if (utilizado > capacidad && capacidad > 0) {
+          console.warn('DETECTADOS DATOS INCONSISTENTES - Intentando corrección automática:', {
+            ubicacion: ubicacionId,
+            utilizadoOriginal: utilizado,
+            capacidadOriginal: capacidad,
+            ratio: Math.round((utilizado / capacidad) * 100)
+          });
+          
+          // Estrategia 1: Si la capacidad parece ser 1, podría ser un error de datos
+          if (capacidad === 1) {
+            console.log('Capacidad = 1 detectada, probablemente error de datos. Usando utilizado como capacidad mínima.');
+            capacidadReal = Math.max(utilizado, 1);
+          }
+          
+          // Estrategia 2: Si ratio > 500%, probablemente hay error en los datos
+          const ratio = (utilizado / capacidad) * 100;
+          if (ratio > 500) {
+            console.log('Ratio > 500% detectado, normalizando datos.');
+            capacidadReal = utilizado; // Asumir que está lleno
+            utilizadoReal = utilizado;
+          }
+        }
+        
+        const porcentajeCalculado = capacidadReal > 0 ? Math.round((utilizadoReal / capacidadReal) * 100) : 0;
+        
+        console.log(`Ocupación DIRECTA para ${ubicacionId}: ${utilizadoReal}/${capacidadReal} = ${porcentajeCalculado}%`);
+        
+        return {
+          porcentaje: porcentajeCalculado,
+          ocupado: utilizadoReal,
+          total: capacidadReal,
+          tipo: 'directa'
+        };
+      }
+    },
+
+    /**
+     * Muestra notificación temporal
+     */
+    showNotification(message, type = "info", duration = 3000) {
+      const notification = document.createElement("div");
+      notification.className = `notification notification-${type}`;
+      notification.textContent = message;
+
+      document.body.appendChild(notification);
+
+      setTimeout(() => {
+        notification.classList.add("show");
+      }, 10);
+
+      setTimeout(() => {
+        notification.classList.remove("show");
+        setTimeout(() => notification.remove(), 300);
+      }, duration);
+    },
+
+    /**
+     * Maneja errores de manera consistente
+     */
+    handleError(error, userMessage = "Ha ocurrido un error") {
+      console.error("Error:", error);
+      this.showNotification(userMessage, "error");
+    },
+
+    /**
+     * Valida si un elemento está en el viewport
+     */
+    isInViewport(element) {
+      const rect = element.getBoundingClientRect();
+      return (
+        rect.top >= 0 &&
+        rect.left >= 0 &&
+        rect.bottom <=
+          (window.innerHeight || document.documentElement.clientHeight) &&
+        rect.right <=
+          (window.innerWidth || document.documentElement.clientWidth)
+      );
+    },
+
+    /**
+     * Genera un ID único
+     */
+    generateId() {
+      return Date.now().toString(36) + Math.random().toString(36).substr(2);
+    },
+
+    /**
+     * Clona objeto profundamente
+     */
+    deepClone(obj) {
+      return JSON.parse(JSON.stringify(obj));
+    },
+
+    /**
+     * Espera una cantidad de milisegundos
+     */
+    sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    },
+
+    /**
+     * Genera color para ocupación
+     */
+    generateOccupancyColor(porcentaje, sinDatos = false) {
+      if (sinDatos) {
+        return "#2D572C"; // Vacío
+      }
+
+      porcentaje = Math.max(0, Math.min(100, porcentaje));
+
+      if (porcentaje <= 0) return "#2D572C"; // Vacío
+      if (porcentaje <= 25) return "#00FF00"; // Bajo
+      if (porcentaje <= 50) return "#FFFF00"; // Medio
+      if (porcentaje <= 75) return "#FF8800"; // Alto
+      return "#FF0000"; // Completo
+    },
+
+    /**
+     * Genera color para vida útil/vencimiento
+     */
+    generateExpiryColor(diasVencimiento) {
+      if (diasVencimiento === undefined || diasVencimiento === null) {
+        return "#CCCCCC"; // Sin datos
+      }
+
+      // Calcular porcentaje de vida útil (asumiendo 365 días como máximo)
+      const porcentaje = Math.max(
+        0,
+        Math.min(100, (diasVencimiento / 365) * 100)
+      );
+
+      if (porcentaje >= 75) return "#00FF00"; // Alto (verde)
+      if (porcentaje >= 50) return "#FFFF00"; // Medio (amarillo)
+      if (porcentaje >= 25) return "#FF8800"; // Bajo (naranja)
+      return "#FF0000"; // Crítico (rojo)
+    },
+  };
+
+  // Hacer las utilidades inmutables
+  Object.freeze(Utils);
+</script>

@@ -1,0 +1,228 @@
+<script>
+  /**
+   * Controlador del mapa SVG
+   */
+  class MapController {
+    constructor(containerId) {
+      this.container = document.getElementById(containerId);
+      this.svg = null;
+      this.zoom = 1;
+      this.isPanning = false;
+      this.startX = 0;
+      this.startY = 0;
+      this.translateX = 0;
+      this.translateY = 0;
+
+      this.init();
+    }
+
+    init() {
+      if (!this.container) {
+        console.error("Contenedor del mapa no encontrado");
+        return;
+      }
+
+      this.setupEventListeners();
+      this.createControls();
+    }
+
+    setupEventListeners() {
+      // Zoom con rueda del mouse
+      this.container.addEventListener("wheel", (e) => this.handleWheel(e));
+
+      // Pan con mouse
+      this.container.addEventListener("mousedown", (e) => this.startPan(e));
+      this.container.addEventListener("mousemove", (e) => this.pan(e));
+      this.container.addEventListener("mouseup", () => this.endPan());
+      this.container.addEventListener("mouseleave", () => this.endPan());
+
+      // Touch events para dispositivos móviles
+      this.container.addEventListener("touchstart", (e) =>
+        this.handleTouchStart(e)
+      );
+      this.container.addEventListener("touchmove", (e) =>
+        this.handleTouchMove(e)
+      );
+      this.container.addEventListener("touchend", () => this.endPan());
+    }
+
+    createControls() {
+      const controls = document.createElement("div");
+      controls.className = "map-controls";
+      controls.innerHTML = `
+      <button class="map-control-btn zoom-in" title="Acercar">+</button>
+      <button class="map-control-btn zoom-out" title="Alejar">−</button>
+      <button class="map-control-btn zoom-reset" title="Restablecer">⟲</button>
+      <button class="map-control-btn fullscreen" title="Pantalla completa">⛶</button>
+    `;
+
+      this.container.appendChild(controls);
+
+      // Event listeners para controles
+      controls
+        .querySelector(".zoom-in")
+        .addEventListener("click", () => this.zoomIn());
+      controls
+        .querySelector(".zoom-out")
+        .addEventListener("click", () => this.zoomOut());
+      controls
+        .querySelector(".zoom-reset")
+        .addEventListener("click", () => this.resetZoom());
+      controls
+        .querySelector(".fullscreen")
+        .addEventListener("click", () => this.toggleFullscreen());
+    }
+
+    setSvg(svgElement) {
+      this.svg = svgElement;
+      this.resetZoom();
+    }
+
+    handleWheel(e) {
+      e.preventDefault();
+
+      const delta =
+        e.deltaY > 0 ? -AppConfig.map.zoomStep : AppConfig.map.zoomStep;
+      const newZoom = Math.max(
+        AppConfig.map.minZoom,
+        Math.min(AppConfig.map.maxZoom, this.zoom + delta)
+      );
+
+      if (newZoom !== this.zoom) {
+        // Calcular punto de zoom basado en la posición del mouse
+        const rect = this.container.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        this.zoomTo(newZoom, x, y);
+      }
+    }
+
+    zoomTo(newZoom, centerX, centerY) {
+      if (!this.svg) return;
+
+      const prevZoom = this.zoom;
+      this.zoom = newZoom;
+
+      // Ajustar traducción para mantener el punto bajo el cursor
+      if (centerX !== undefined && centerY !== undefined) {
+        const scale = newZoom / prevZoom;
+        this.translateX = centerX - scale * (centerX - this.translateX);
+        this.translateY = centerY - scale * (centerY - this.translateY);
+      }
+
+      this.updateTransform();
+    }
+
+    zoomIn() {
+      const newZoom = Math.min(
+        AppConfig.map.maxZoom,
+        this.zoom + AppConfig.map.zoomStep
+      );
+      const rect = this.container.getBoundingClientRect();
+      this.zoomTo(newZoom, rect.width / 2, rect.height / 2);
+    }
+
+    zoomOut() {
+      const newZoom = Math.max(
+        AppConfig.map.minZoom,
+        this.zoom - AppConfig.map.zoomStep
+      );
+      const rect = this.container.getBoundingClientRect();
+      this.zoomTo(newZoom, rect.width / 2, rect.height / 2);
+    }
+
+    resetZoom() {
+      this.zoom = AppConfig.map.defaultZoom;
+      this.translateX = 0;
+      this.translateY = 0;
+      this.updateTransform();
+    }
+
+    startPan(e) {
+      if (e.button !== 0) return; // Solo botón izquierdo
+
+      this.isPanning = true;
+      this.startX = e.clientX - this.translateX;
+      this.startY = e.clientY - this.translateY;
+      this.container.style.cursor = "grabbing";
+    }
+
+    pan(e) {
+      if (!this.isPanning) return;
+
+      e.preventDefault();
+      this.translateX = e.clientX - this.startX;
+      this.translateY = e.clientY - this.startY;
+      this.updateTransform();
+    }
+
+    endPan() {
+      this.isPanning = false;
+      this.container.style.cursor = "grab";
+    }
+
+    handleTouchStart(e) {
+      if (e.touches.length === 1) {
+        const touch = e.touches[0];
+        this.startPan({
+          clientX: touch.clientX,
+          clientY: touch.clientY,
+          button: 0,
+        });
+      }
+    }
+
+    handleTouchMove(e) {
+      if (e.touches.length === 1) {
+        e.preventDefault();
+        const touch = e.touches[0];
+        this.pan({ clientX: touch.clientX, clientY: touch.clientY });
+      }
+    }
+
+    updateTransform() {
+      if (!this.svg) return;
+
+      const transform = `translate(${this.translateX}px, ${this.translateY}px) scale(${this.zoom})`;
+      this.svg.style.transform = transform;
+      this.svg.setAttribute("data-zoomed", this.zoom !== 1);
+    }
+
+    toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        this.container.requestFullscreen().catch((err) => {
+          console.error("Error al entrar en pantalla completa:", err);
+        });
+      } else {
+        document.exitFullscreen();
+      }
+    }
+
+    // Métodos públicos para integración
+    getZoomLevel() {
+      return this.zoom;
+    }
+
+    getTranslation() {
+      return { x: this.translateX, y: this.translateY };
+    }
+
+    centerOnElement(element) {
+      if (!element || !this.svg) return;
+
+      const bbox = element.getBBox();
+      const rect = this.container.getBoundingClientRect();
+
+      // Calcular centro del elemento
+      const centerX = bbox.x + bbox.width / 2;
+      const centerY = bbox.y + bbox.height / 2;
+
+      // Calcular traducción necesaria para centrar
+      this.translateX = rect.width / 2 - centerX * this.zoom;
+      this.translateY = rect.height / 2 - centerY * this.zoom;
+
+      this.updateTransform();
+    }
+  }
+</script>

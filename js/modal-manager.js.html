@@ -1,0 +1,430 @@
+<script>
+  /**
+   * Modal Manager - Manejo de modales y ventanas emergentes
+   */
+  const ModalManager = {
+    modal: null,
+    modalContent: null,
+
+    /**
+     * Inicializa el sistema de modales
+     */
+    init() {
+      this.modal = document.getElementById("ubicacionModal");
+      this.modalContent = document.getElementById("modalContent");
+      this.setupEventListeners();
+    },
+
+    /**
+     * Configura event listeners para modales
+     */
+    setupEventListeners() {
+      if (!this.modal) return;
+
+      // Botón de cierre
+      const closeButton = this.modal.querySelector(".close-modal");
+      if (closeButton) {
+        closeButton.addEventListener("click", () => this.close());
+      }
+
+      // Cerrar al hacer clic fuera del modal
+      this.modal.addEventListener("click", (e) => {
+        if (e.target === this.modal) {
+          this.close();
+        }
+      });
+
+      // Cerrar con tecla Escape
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && this.isOpen()) {
+          this.close();
+        }
+      });
+
+      // Configurar clics en ubicaciones
+      this.setupLocationClicks();
+    },
+
+    /**
+     * Configura clics en ubicaciones del SVG
+     */
+    setupLocationClicks() {
+      console.log("Configurando clics en ubicaciones para modal...");
+      const svgContainer = document.getElementById("svg-container");
+      if (!svgContainer) {
+        console.warn("SVG container no encontrado para configurar clics de modal");
+        return;
+      }
+
+      // Limpiar listeners existentes
+      if (this.handleLocationClick) {
+        svgContainer.removeEventListener("click", this.handleLocationClick);
+      }
+
+      // Usar delegación de eventos para elementos dinámicos
+      this.handleLocationClick = (e) => {
+        const target = this.getClickableElement(e.target);
+        if (target) {
+          console.log(`Clic detectado en ubicación: ${target.id}`);
+          this.showLocationDetail(e, target);
+        }
+      };
+
+      svgContainer.addEventListener("click", this.handleLocationClick);
+      console.log("Clics de modal configurados correctamente");
+    },
+
+    /**
+     * Obtiene elemento clickeable (rect o g con ID)
+     */
+    getClickableElement(element) {
+      let target = element;
+      
+      // Buscar en elementos padre si es necesario
+      while (target && target !== document) {
+        if ((target.tagName === "rect" || target.tagName === "g") && target.id) {
+          // Verificar que parece ser una ubicación (contiene guión o punto)
+          if (target.id.includes("-") || target.id.includes(".")) {
+            return target;
+          }
+        }
+        target = target.parentElement;
+      }
+      
+      return null;
+    },
+
+    /**
+     * Muestra detalles de una ubicación
+     */
+    showLocationDetail(e, elemento = null) {
+      const target = elemento || this.getClickableElement(e.target);
+      if (!target) return;
+
+      const ubicacionId = target.getAttribute("id");
+      if (!ubicacionId) return;
+
+      console.log(`Mostrando detalles para ubicación: ${ubicacionId}`);
+
+      const datosUbicacion = this.getLocationData(ubicacionId);
+
+      if (datosUbicacion) {
+        const htmlDetalle = this.generateLocationDetailHTML(
+          ubicacionId,
+          datosUbicacion
+        );
+
+        this.show(htmlDetalle, `Detalles de ${ubicacionId}`);
+      } else {
+        // Mostrar modal con información básica aunque no haya datos
+        const htmlDetalle = this.generateEmptyLocationHTML(ubicacionId);
+        this.show(htmlDetalle, `Detalles de ${ubicacionId}`);
+      }
+    },
+
+    /**
+     * Obtiene información de niveles de una ubicación
+     */
+    getLocationLevels(elemento) {
+      const ubicacionCompleta = elemento.getAttribute("id");
+
+      if (!ubicacionCompleta) return {};
+
+      const partes = ubicacionCompleta
+        .split(/[-.]/)
+        .filter((p) => p.length > 0);
+
+      return {
+        pasillo: partes[0] || "",
+        estanteria: partes[1] || "",
+        nivel: this.extractLevelNumber(ubicacionCompleta),
+        ubicacionCompleta: ubicacionCompleta,
+      };
+    },
+
+    /**
+     * Extrae número de nivel de la ubicación
+     */
+    extractLevelNumber(ubicacionCompleta) {
+      const match = ubicacionCompleta.match(/\d+$/);
+      return match ? parseInt(match[0]) : 1;
+    },
+
+    /**
+     * Obtiene datos de una ubicación
+     */
+    getLocationData(ubicacionId) {
+      if (!window.datosUbicaciones) return null;
+
+      const datosOcupacion = window.datosUbicaciones.ocupacion?.[ubicacionId];
+      const datosVencimiento =
+        window.datosUbicaciones.vencimiento?.[ubicacionId];
+
+      if (!datosOcupacion) return null;
+
+      return {
+        ...datosOcupacion,
+        vencimiento: datosVencimiento,
+      };
+    },
+
+    /**
+     * Genera HTML para detalles de ubicación
+     */
+    generateLocationDetailHTML(ubicacionId, datosUbicacion) {
+      // Siempre usar nuestra lógica, no los datos precomputados
+      const ocupacionInfo = Utils.calculateCorrectOccupancy(ubicacionId, datosUbicacion);
+      const area = datosUbicacion.area || "Sin área";
+      
+      console.log('Modal - Datos de ocupación:', {
+        ubicacion: ubicacionId,
+        ocupacionCalculada: ocupacionInfo,
+        datosOriginales: {
+          porcentaje: datosUbicacion.porcentaje,
+          utilizado: datosUbicacion.utilizado,
+          capacidad: datosUbicacion.capacidad_maxima
+        }
+      });
+
+      // Verificar si los datos originales están incorrectos y usar nuestra lógica
+      if (datosUbicacion.utilizado > datosUbicacion.capacidad_maxima && datosUbicacion.capacidad_maxima > 0) {
+        console.warn(`Datos inconsistentes detectados en ${ubicacionId}: utilizado=${datosUbicacion.utilizado} > capacidad=${datosUbicacion.capacidad_maxima}`);
+      }
+
+      let html = `
+      <div class="location-detail-modal">
+        <div class="detail-header">
+          <h3 id="modal-title">${ubicacionId}</h3>
+          <p><strong>Área:</strong> ${area}</p>
+          <p><strong>Ocupación:</strong> ${ocupacionInfo.porcentaje}% (${ocupacionInfo.ocupado}/${ocupacionInfo.total} ${ocupacionInfo.tipo === 'niveles' ? 'niveles' : 'posiciones'})</p>
+        </div>
+        
+        <div class="detail-content">
+          <div class="info-group">
+            <h4>📦 Estado de Ocupación</h4>
+            <div class="ocupacion-detalle">
+              <div class="ocupacion-barra">
+                <div class="ocupacion-fill" style="width: ${ocupacionInfo.porcentaje}%"></div>
+              </div>
+              <div class="ocupacion-texto">
+                ${ocupacionInfo.porcentaje}% ocupado (${ocupacionInfo.ocupado}/${ocupacionInfo.total} ${ocupacionInfo.tipo === 'niveles' ? 'niveles' : 'posiciones'})
+              </div>
+            </div>
+          </div>
+        `;
+
+      // Mostrar información de vencimiento si existe
+      if (datosUbicacion.vencimiento) {
+        const porcentajeVidaUtil = Math.round(parseFloat(datosUbicacion.vencimiento.porcentaje) || 0);
+        html += `
+          <div class="info-group">
+            <h4>⏰ Vida Útil</h4>
+            <div class="vencimiento-info">
+              <div class="vencimiento-barra">
+                <div class="vencimiento-fill" style="width: ${porcentajeVidaUtil}%"></div>
+              </div>
+              <div class="vencimiento-texto">
+                ${porcentajeVidaUtil}% vida útil restante
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      // Mostrar productos de los niveles
+      html += this.generateProductsHTML(datosUbicacion);
+      html += `</div></div>`;
+
+      return html;
+    },
+
+    /**
+     * Genera HTML para niveles de ubicación
+     */
+    generateLocationLevelsHTML(infoNiveles, utilizado, capacidad) {
+      return `
+      <div class="niveles-info">
+        <div class="nivel-item">
+          <strong>Pasillo:</strong> ${infoNiveles.pasillo}
+        </div>
+        <div class="nivel-item">
+          <strong>Estantería:</strong> ${infoNiveles.estanteria}
+        </div>
+        <div class="nivel-item">
+          <strong>Nivel:</strong> ${infoNiveles.nivel}
+        </div>
+        <div class="nivel-item">
+          <strong>Capacidad:</strong> ${capacidad} unidades
+        </div>
+        <div class="nivel-item ocupacion-nivel">
+          <strong>Estado:</strong> 
+          <span class="status-badge ${this.getOccupancyStatusClass(utilizado)}">
+            ${this.getOccupancyStatusText(utilizado)}
+          </span>
+        </div>
+      </div>
+    `;
+    },
+
+    /**
+     * Genera HTML para productos en ubicación
+     */
+    generateProductsHTML(datosUbicacion) {
+      let productosHtml = `
+      <div class="info-group">
+        <h4>📋 Productos</h4>
+      `;
+
+      if (datosUbicacion.niveles && Object.keys(datosUbicacion.niveles).length > 0) {
+        let productos = [];
+        Object.entries(datosUbicacion.niveles).forEach(([nivelId, nivelData]) => {
+          if (nivelData.skus && Object.keys(nivelData.skus).length > 0) {
+            Object.values(nivelData.skus).forEach(sku => {
+              productos.push({
+                nivel: nivelId,
+                sku: sku.sku,
+                descripcion: sku.descripcion || 'Sin descripción',
+                pallets: sku.pallets || 0,
+                cajas: sku.cajas || 0
+              });
+            });
+          }
+        });
+
+        if (productos.length > 0) {
+          productosHtml += `
+            <table class="detail-table">
+              <thead>
+                <tr>
+                  <th>Nivel</th>
+                  <th>SKU</th>
+                  <th>Descripción</th>
+                  <th>Pallets</th>
+                  <th>Cajas</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${productos.map(producto => `
+                  <tr>
+                    <td>${producto.nivel}</td>
+                    <td>${producto.sku}</td>
+                    <td>${producto.descripcion}</td>
+                    <td>${producto.pallets}</td>
+                    <td>${producto.cajas}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          `;
+        } else {
+          productosHtml += `<div class="no-detail-data"><p>No hay productos en esta ubicación</p></div>`;
+        }
+      } else {
+        productosHtml += `<div class="no-detail-data"><p>No hay productos en esta ubicación</p></div>`;
+      }
+
+      productosHtml += `</div></div>`;
+      return productosHtml;
+    },
+
+    /**
+     * Genera HTML para ubicación vacía
+     */
+    generateEmptyLocationHTML(ubicacionId) {
+      return `
+      <div class="location-detail-modal">
+        <div class="detail-header">
+          <h3 id="modal-title">${ubicacionId}</h3>
+          <p><strong>Estado:</strong> Sin datos disponibles</p>
+        </div>
+        
+        <div class="detail-content">
+          <div class="no-detail-data">
+            <p>Esta ubicación no tiene información de ocupación o productos.</p>
+            <p>Verifique que el archivo de datos contenga información para esta ubicación.</p>
+          </div>
+        </div>
+      </div>
+      `;
+    },
+
+    /**
+     * Obtiene clase CSS para estado de vida útil
+     */
+    getExpiryColorClass(diasVencimiento) {
+      if (diasVencimiento < 0) return "vencido";
+      if (diasVencimiento <= 30) return "critico";
+      if (diasVencimiento <= 90) return "bajo";
+      if (diasVencimiento <= 180) return "medio";
+      return "alto";
+    },
+
+    /**
+     * Obtiene clase CSS para estado de ocupación
+     */
+    getOccupancyStatusClass(porcentaje) {
+      if (porcentaje === 0) return "vacio";
+      if (porcentaje < 25) return "bajo";
+      if (porcentaje < 75) return "medio";
+      if (porcentaje < 100) return "alto";
+      return "completo";
+    },
+
+    /**
+     * Obtiene texto para estado de ocupación
+     */
+    getOccupancyStatusText(porcentaje) {
+      if (porcentaje === 0) return "Vacío";
+      if (porcentaje < 25) return "Poco ocupado";
+      if (porcentaje < 75) return "Parcialmente ocupado";
+      if (porcentaje < 100) return "Casi lleno";
+      return "Completo";
+    },
+
+    /**
+     * Muestra el modal
+     */
+    show(content, title = "Detalles") {
+      if (!this.modal || !this.modalContent) return;
+
+      this.modalContent.innerHTML = content;
+      this.modal.style.display = "block";
+      this.modal.setAttribute("aria-hidden", "false");
+
+      // Focus en el modal para accesibilidad
+      const titleElement = this.modalContent.querySelector("#modal-title");
+      if (titleElement) {
+        titleElement.focus();
+      }
+    },
+
+    /**
+     * Cierra el modal
+     */
+    close() {
+      if (!this.modal) return;
+
+      this.modal.style.display = "none";
+      this.modal.setAttribute("aria-hidden", "true");
+    },
+
+    /**
+     * Verifica si el modal está abierto
+     */
+    isOpen() {
+      return this.modal && this.modal.style.display === "block";
+    },
+
+    /**
+     * Reconfigura event listeners (útil después de actualizar el SVG)
+     */
+    reconfigure() {
+      setTimeout(() => {
+        this.setupLocationClicks();
+      }, 100);
+    },
+  };
+
+  // Exportar para uso global
+  window.ModalManager = ModalManager;
+</script>

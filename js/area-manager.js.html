@@ -1,0 +1,381 @@
+<script>
+/**
+ * Area Manager - Manejo de áreas y filtrado por ubicaciones
+ */
+const AreaManager = {
+  availableAreas: [],
+  selectedAreas: [],
+  
+  /**
+   * Inicializa el gestor de áreas
+   */
+  init() {
+    this.loadAvailableAreas();
+    this.setupAreaFiltering();
+  },
+
+  /**
+   * Carga áreas disponibles
+   */
+  loadAvailableAreas() {
+    if (!window.datosUbicaciones || !window.datosUbicaciones.ocupacion) {
+      console.log("No hay datos de ubicaciones para extraer áreas");
+      return;
+    }
+
+    const areasSet = new Set();
+    const datosOcupacion = window.datosUbicaciones.ocupacion;
+
+    // Extraer áreas de las ubicaciones
+    Object.keys(datosOcupacion).forEach(ubicacionId => {
+      const datos = datosOcupacion[ubicacionId];
+      if (datos && datos.area) {
+        areasSet.add(datos.area);
+      } else {
+        // Extraer área del ID de ubicación (primera parte antes del guión)
+        const partesUbicacion = ubicacionId.split('-');
+        if (partesUbicacion.length > 0) {
+          areasSet.add(partesUbicacion[0]);
+        }
+      }
+    });
+
+    this.availableAreas = Array.from(areasSet).sort();
+    this.selectedAreas = [...this.availableAreas]; // Seleccionar todas por defecto
+    
+    this.populateAreasDropdown();
+    this.updateSelectedAreasText();
+    
+    console.log(`Cargadas ${this.availableAreas.length} áreas:`, this.availableAreas);
+  },
+
+  /**
+   * Popula el dropdown de áreas
+   */
+  populateAreasDropdown() {
+    const areasList = document.getElementById("areas-list");
+    if (!areasList) return;
+
+    areasList.innerHTML = this.availableAreas.map(area => `
+      <div class="checkbox-item">
+        <label>
+          <input type="checkbox" value="${area}" checked>
+          <span>${area}</span>
+        </label>
+      </div>
+    `).join("");
+
+    // Configurar event listeners para checkboxes
+    this.setupAreaCheckboxes();
+  },
+
+  /**
+   * Configura checkboxes de áreas
+   */
+  setupAreaCheckboxes() {
+    const selectAllCheckbox = document.getElementById("select-all-areas");
+    const areaCheckboxes = document.querySelectorAll("#areas-list input[type='checkbox']");
+
+    // Checkbox "Seleccionar todas"
+    if (selectAllCheckbox) {
+      selectAllCheckbox.addEventListener("change", (e) => {
+        const isChecked = e.target.checked;
+        areaCheckboxes.forEach(checkbox => {
+          checkbox.checked = isChecked;
+        });
+        this.updateSelectedAreas();
+      });
+    }
+
+    // Checkboxes individuales
+    areaCheckboxes.forEach(checkbox => {
+      checkbox.addEventListener("change", () => {
+        this.updateSelectedAreas();
+        this.updateSelectAllState();
+      });
+    });
+  },
+
+  /**
+   * Actualiza áreas seleccionadas
+   */
+  updateSelectedAreas() {
+    const areaCheckboxes = document.querySelectorAll("#areas-list input[type='checkbox']:checked");
+    this.selectedAreas = Array.from(areaCheckboxes).map(cb => cb.value);
+    
+    this.updateSelectedAreasText();
+    this.applyAreaFilter();
+  },
+
+  /**
+   * Actualiza estado del checkbox "Seleccionar todas"
+   */
+  updateSelectAllState() {
+    const selectAllCheckbox = document.getElementById("select-all-areas");
+    const areaCheckboxes = document.querySelectorAll("#areas-list input[type='checkbox']");
+    const checkedCheckboxes = document.querySelectorAll("#areas-list input[type='checkbox']:checked");
+
+    if (selectAllCheckbox) {
+      if (checkedCheckboxes.length === 0) {
+        selectAllCheckbox.checked = false;
+        selectAllCheckbox.indeterminate = false;
+      } else if (checkedCheckboxes.length === areaCheckboxes.length) {
+        selectAllCheckbox.checked = true;
+        selectAllCheckbox.indeterminate = false;
+      } else {
+        selectAllCheckbox.checked = false;
+        selectAllCheckbox.indeterminate = true;
+      }
+    }
+  },
+
+  /**
+   * Actualiza texto de áreas seleccionadas
+   */
+  updateSelectedAreasText() {
+    const selectedText = document.getElementById("areas-selected-text");
+    if (!selectedText) return;
+
+    if (this.selectedAreas.length === 0) {
+      selectedText.textContent = "Ninguna";
+    } else if (this.selectedAreas.length === this.availableAreas.length) {
+      selectedText.textContent = "Todas";
+    } else if (this.selectedAreas.length === 1) {
+      selectedText.textContent = this.selectedAreas[0];
+    } else {
+      selectedText.textContent = `${this.selectedAreas.length} seleccionadas`;
+    }
+  },
+
+  /**
+   * Configura filtrado por áreas
+   */
+  setupAreaFiltering() {
+    // El filtrado se aplicará automáticamente cuando cambien las áreas seleccionadas
+    console.log("Filtrado por áreas configurado");
+  },
+
+  /**
+   * Aplica filtro por área
+   */
+  applyAreaFilter() {
+    if (!window.datosUbicaciones || !window.datosUbicaciones.ocupacion) {
+      console.log("No hay datos para filtrar por área");
+      return;
+    }
+
+    // Si no hay áreas seleccionadas o todas están seleccionadas, mostrar todo
+    if (this.selectedAreas.length === 0 || this.selectedAreas.length === this.availableAreas.length) {
+      console.log("Mostrando todas las áreas (sin filtro)");
+      this.clearVisualFilter();
+      return;
+    }
+
+    const selectedAreasSet = new Set(this.selectedAreas);
+    const ubicacionesFiltradas = [];
+
+    // Filtrar ubicaciones por áreas seleccionadas
+    Object.entries(window.datosUbicaciones.ocupacion).forEach(([ubicacionId, datos]) => {
+      let areaUbicacion = datos.area;
+      
+      // Si no hay área en los datos, extraer del ID
+      if (!areaUbicacion) {
+        const partesUbicacion = ubicacionId.split('-');
+        if (partesUbicacion.length > 0) {
+          areaUbicacion = partesUbicacion[0];
+        }
+      }
+      
+      if (areaUbicacion && selectedAreasSet.has(areaUbicacion)) {
+        ubicacionesFiltradas.push(ubicacionId);
+      }
+    });
+
+    console.log(`Filtrado por áreas: ${ubicacionesFiltradas.length} ubicaciones`);
+    
+    // Aplicar filtro visual
+    this.applyDirectVisualFilter(ubicacionesFiltradas);
+    
+    // Filtrar tabla de vencimientos
+    if (window.TableManager) {
+      window.TableManager.filterByLocations(ubicacionesFiltradas);
+    }
+    
+    // Actualizar calendario
+    this.updateCalendarWithFilter(ubicacionesFiltradas);
+  },
+
+  /**
+   * Aplica filtro visual directo
+   */
+  applyDirectVisualFilter(ubicacionesArray) {
+    const svgContainer = document.getElementById("svg-container");
+    if (!svgContainer) return;
+
+    const todosLosElementos = svgContainer.querySelectorAll("rect, g");
+    const ubicacionesSet = new Set(ubicacionesArray);
+
+    todosLosElementos.forEach(elemento => {
+      const id = elemento.getAttribute("id");
+      
+      if (id && (id.includes("-") || id.includes("."))) {
+        if (ubicacionesArray.length === 0 || ubicacionesSet.has(id)) {
+          // Mostrar elemento
+          elemento.style.opacity = "1";
+          elemento.style.display = "block";
+        } else {
+          // Ocultar elemento
+          elemento.style.opacity = "0.1";
+          elemento.style.display = "block";
+        }
+      }
+    });
+
+    console.log(`Filtro visual aplicado a ${ubicacionesArray.length} ubicaciones`);
+  },
+
+  /**
+   * Actualiza calendario con filtro
+   */
+  updateCalendarWithFilter(ubicaciones) {
+    if (!window.datosVencimientos) {
+      console.log("No hay datos de vencimientos para filtrar calendario");
+      return;
+    }
+
+    const ubicacionesSet = new Set(ubicaciones);
+    const eventosFiltrados = [];
+
+    // Filtrar eventos por ubicaciones
+    Object.entries(window.datosVencimientos).forEach(([ubicacion, productos]) => {
+      if (ubicacionesSet.has(ubicacion) && Array.isArray(productos)) {
+        productos.forEach(producto => {
+          if (producto.fechaVencimiento) {
+            const diasVencimiento = parseInt(producto.diasVencimiento) || 0;
+            
+            eventosFiltrados.push({
+              title: `${producto.sku || 'SKU'} - ${ubicacion}`,
+              start: producto.fechaVencimiento,
+              className: this.getCalendarEventClass(diasVencimiento),
+              extendedProps: {
+                ubicacion: ubicacion,
+                sku: producto.sku,
+                cantidad: producto.cantidad,
+                diasVencimiento: diasVencimiento
+              }
+            });
+          }
+        });
+      }
+    });
+
+    // Actualizar calendario si está disponible
+    if (window.calendar && typeof window.calendar.getEvents === 'function') {
+      try {
+        // En FullCalendar 5, primero obtener todos los eventos y removerlos
+        const eventosActuales = window.calendar.getEvents();
+        eventosActuales.forEach(evento => evento.remove());
+        
+        // Agregar nuevos eventos
+        eventosFiltrados.forEach(evento => {
+          window.calendar.addEvent(evento);
+        });
+        
+        console.log(`Calendario actualizado con ${eventosFiltrados.length} eventos filtrados`);
+      } catch (error) {
+        console.error("Error actualizando calendario:", error);
+      }
+    } else {
+      console.log("Calendario no disponible o no inicializado correctamente");
+    }
+  },
+
+  /**
+   * Obtiene clase CSS para evento de calendario
+   */
+  getCalendarEventClass(diasVencimiento) {
+    if (diasVencimiento < 0) return "fc-event-vencido";
+    if (diasVencimiento <= 7) return "fc-event-critico";
+    if (diasVencimiento <= 30) return "fc-event-bajo";
+    if (diasVencimiento <= 90) return "fc-event-medio";
+    return "fc-event-alto";
+  },
+
+  /**
+   * Limpia filtro visual (muestra todos los elementos)
+   */
+  clearVisualFilter() {
+    const svgContainer = document.getElementById("svg-container");
+    if (!svgContainer) return;
+
+    const todosLosElementos = svgContainer.querySelectorAll("rect, g");
+    todosLosElementos.forEach(elemento => {
+      const id = elemento.getAttribute("id");
+      if (id && (id.includes("-") || id.includes("."))) {
+        elemento.style.opacity = "1";
+        elemento.style.display = "block";
+        elemento.classList.remove("highlighted", "filtered-out");
+      }
+    });
+
+    console.log("Filtro visual limpiado - mostrando todos los elementos");
+  },
+
+  /**
+   * Limpia filtro de área
+   */
+  clearAreaFilter() {
+    // Seleccionar todas las áreas
+    const areaCheckboxes = document.querySelectorAll("#areas-list input[type='checkbox']");
+    areaCheckboxes.forEach(checkbox => {
+      checkbox.checked = true;
+    });
+
+    const selectAllCheckbox = document.getElementById("select-all-areas");
+    if (selectAllCheckbox) {
+      selectAllCheckbox.checked = true;
+      selectAllCheckbox.indeterminate = false;
+    }
+
+    this.selectedAreas = [...this.availableAreas];
+    this.updateSelectedAreasText();
+    this.clearVisualFilter(); // Usar clearVisualFilter en lugar de applyAreaFilter
+    
+    console.log("Filtro de área limpiado");
+  },
+
+  /**
+   * Obtiene áreas seleccionadas
+   */
+  getSelectedAreas() {
+    return [...this.selectedAreas];
+  },
+
+  /**
+   * Establece áreas seleccionadas
+   */
+  setSelectedAreas(areas) {
+    this.selectedAreas = areas.filter(area => this.availableAreas.includes(area));
+    
+    // Actualizar checkboxes
+    const areaCheckboxes = document.querySelectorAll("#areas-list input[type='checkbox']");
+    areaCheckboxes.forEach(checkbox => {
+      checkbox.checked = this.selectedAreas.includes(checkbox.value);
+    });
+
+    this.updateSelectAllState();
+    this.updateSelectedAreasText();
+    this.applyAreaFilter();
+  },
+
+  /**
+   * Recarga áreas (útil después de actualizar datos)
+   */
+  reload() {
+    this.loadAvailableAreas();
+  }
+};
+
+// Exportar para uso global
+window.AreaManager = AreaManager;
+</script>

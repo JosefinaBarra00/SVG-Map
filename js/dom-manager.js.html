@@ -1,0 +1,276 @@
+<script>
+  /**
+   * DOM Manager - Manejo de elementos DOM y eventos
+   */
+  const DOMManager = {
+    elements: {},
+
+    /**
+     * Inicializa elementos DOM y eventos
+     */
+    init() {
+      this.initializeElements();
+      this.setupEventListeners();
+      this.setupInitialState();
+    },
+
+    /**
+     * Inicializa referencias a elementos DOM
+     */
+    initializeElements() {
+      this.elements = {
+        fuenteDatosSelector: document.getElementById("fuenteDatosSelector"),
+        tipoMapaSelector: document.getElementById("tipoMapaSelector"),
+        areasDropdown: document.getElementById("areas-dropdown"),
+        areasDropdownContent: document.querySelector(
+          "#areas-dropdown + .dropdown-content"
+        ),
+        stockThreshold: document.getElementById("stock-threshold"),
+        svgContainer: document.getElementById("svg-container"),
+        loadingIndicator: document.querySelector(".svg-loading"),
+      };
+    },
+
+    /**
+     * Configura event listeners principales
+     */
+    setupEventListeners() {
+      this.setupDataSourceSelector();
+      this.setupMapTypeSelector();
+      this.setupAreasDropdown();
+      this.setupDocumentEvents();
+    },
+
+    /**
+     * Configura selector de fuente de datos
+     */
+    setupDataSourceSelector() {
+      if (this.elements.fuenteDatosSelector) {
+        this.elements.fuenteDatosSelector.addEventListener("change", (e) => {
+          const nuevaFuente = e.target.value;
+          console.log(`Cambiando fuente de datos a: ${nuevaFuente}`);
+
+          google.script.run
+            .withSuccessHandler((result) => {
+              console.log("Fuente de datos actualizada:", result);
+              this.showSuccessMessage(
+                "Fuente de datos actualizada correctamente"
+              );
+            })
+            .withFailureHandler((error) => {
+              console.error("Error al actualizar fuente de datos:", error);
+              this.showErrorMessage("Error al actualizar fuente de datos");
+            })
+            .actualizarFuenteDatos(nuevaFuente);
+        });
+      }
+    },
+
+    /**
+     * Configura selector de tipo de mapa
+     */
+    setupMapTypeSelector() {
+      if (this.elements.tipoMapaSelector) {
+        this.elements.tipoMapaSelector.addEventListener("change", (e) => {
+          const tipoMapa = e.target.value;
+          console.log(`Cambiando tipo de mapa a: ${tipoMapa}`);
+
+          LegendManager.updateLegend(tipoMapa);
+
+          google.script.run
+            .withSuccessHandler((result) => {
+              console.log("Tipo de mapa actualizado:", result);
+              if (window.actualizarVisualizacionMapa) {
+                window.actualizarVisualizacionMapa(tipoMapa);
+              }
+            })
+            .withFailureHandler((error) => {
+              console.error("Error al actualizar tipo de mapa:", error);
+            })
+            .actualizarTipoMapa(tipoMapa);
+        });
+      }
+
+      // Configurar sub-selector de movimientos
+      const tipoMovimientoSubSelector = document.getElementById("tipoMovimientoSubSelector");
+      if (tipoMovimientoSubSelector) {
+        tipoMovimientoSubSelector.addEventListener("change", (e) => {
+          const tipoMovimiento = e.target.value;
+          console.log(`Cambiando tipo de movimiento a: ${tipoMovimiento}`);
+          
+          // Si estamos en modo movimientos, actualizar visualización
+          const tipoMapa = this.elements.tipoMapaSelector?.value;
+          if (tipoMapa === "movimientos" && window.actualizarVisualizacionMapa) {
+            window.actualizarVisualizacionMapa("movimientos");
+          }
+        });
+      }
+    },
+
+    /**
+     * Configura dropdown de áreas
+     */
+    setupAreasDropdown() {
+      if (this.elements.areasDropdown) {
+        this.elements.areasDropdown.addEventListener("click", (e) => {
+          e.stopPropagation();
+          this.toggleDropdown();
+        });
+      }
+    },
+
+    /**
+     * Configura eventos de documento
+     */
+    setupDocumentEvents() {
+      document.addEventListener("click", (event) => {
+        if (
+          this.elements.areasDropdownContent &&
+          !this.elements.areasDropdownContent.contains(event.target) &&
+          !this.elements.areasDropdown.contains(event.target)
+        ) {
+          this.closeDropdown();
+        }
+      });
+
+      // Configurar checkboxes de áreas
+      document.querySelectorAll(".checkbox-item").forEach((checkbox) => {
+        checkbox.addEventListener("click", (e) => {
+          e.stopPropagation();
+        });
+      });
+    },
+
+    /**
+     * Configura estado inicial
+     */
+    setupInitialState() {
+      setTimeout(() => {
+        document.querySelectorAll(".svg-loading").forEach((el) => {
+          el.style.display = "none";
+        });
+        window.colorApplicationInProgress = false;
+
+        // Ajustar viewBox al finalizar la inicialización
+        if (window.ajustarViewBoxSVG) {
+          console.log("Ajustando viewBox en inicialización...");
+          window.ajustarViewBoxSVG();
+        }
+      }, 3000);
+    },
+
+    /**
+     * Toggle dropdown de áreas
+     */
+    toggleDropdown() {
+      if (this.elements.areasDropdownContent) {
+        const isOpen =
+          this.elements.areasDropdownContent.style.display === "block";
+        this.elements.areasDropdownContent.style.display = isOpen
+          ? "none"
+          : "block";
+        this.elements.areasDropdown.setAttribute("aria-expanded", !isOpen);
+      }
+    },
+
+    /**
+     * Cierra dropdown de áreas
+     */
+    closeDropdown() {
+      if (this.elements.areasDropdownContent) {
+        this.elements.areasDropdownContent.style.display = "none";
+        this.elements.areasDropdown.setAttribute("aria-expanded", "false");
+      }
+    },
+
+    /**
+     * Muestra mensaje de éxito
+     */
+    showSuccessMessage(message) {
+      console.log("SUCCESS:", message);
+      // Implementar notificación visual si es necesario
+    },
+
+    /**
+     * Muestra mensaje de error
+     */
+    showErrorMessage(message) {
+      console.error("ERROR:", message);
+      // Implementar notificación visual si es necesario
+    },
+
+    /**
+     * Inicializa selector de fuente de datos
+     */
+    initializeDataSourceSelector() {
+      google.script.run
+        .withSuccessHandler((fuente) => {
+          if (this.elements.fuenteDatosSelector && fuente) {
+            this.elements.fuenteDatosSelector.value = fuente;
+            console.log(`Fuente de datos inicial: ${fuente}`);
+          }
+        })
+        .withFailureHandler((error) => {
+          console.error("Error al obtener fuente de datos:", error);
+        })
+        .obtenerFuenteDatosSeleccionada();
+    },
+  };
+
+  /**
+   * Legend Manager - Manejo de leyendas
+   */
+  const LegendManager = {
+    /**
+     * Actualiza la leyenda según el tipo de mapa
+     */
+    updateLegend(tipoMapa) {
+      const leyendaOcupacion = document.getElementById("leyenda-ocupacion");
+      const leyendaVencimiento = document.getElementById("leyenda-vencimiento");
+      const leyendaMovimientos = document.getElementById("leyenda-movimientos");
+
+      // Ocultar todas las leyendas primero
+      if (leyendaOcupacion) leyendaOcupacion.classList.add("hidden");
+      if (leyendaVencimiento) leyendaVencimiento.classList.add("hidden");
+      if (leyendaMovimientos) leyendaMovimientos.classList.add("hidden");
+
+      // Manejar sub-selector de movimientos
+      const tipoMovimientoSubSelector = document.getElementById("tipoMovimientoSubSelector");
+      const filtrosMovimientos = document.getElementById("filtros-movimientos");
+      
+      // Mostrar la leyenda correspondiente
+      if (tipoMapa === "ocupacion") {
+        if (leyendaOcupacion) leyendaOcupacion.classList.remove("hidden");
+        if (tipoMovimientoSubSelector) tipoMovimientoSubSelector.style.display = "none";
+        if (filtrosMovimientos) filtrosMovimientos.classList.add("hidden");
+      } else if (tipoMapa === "vencimiento") {
+        if (leyendaVencimiento) leyendaVencimiento.classList.remove("hidden");
+        if (tipoMovimientoSubSelector) tipoMovimientoSubSelector.style.display = "none";
+        if (filtrosMovimientos) filtrosMovimientos.classList.add("hidden");
+      } else if (tipoMapa === "movimientos") {
+        if (leyendaMovimientos) leyendaMovimientos.classList.remove("hidden");
+        // Mostrar sub-selector de tipo de movimiento
+        if (tipoMovimientoSubSelector) tipoMovimientoSubSelector.style.display = "inline-block";
+        // Mostrar filtros específicos de movimientos
+        if (filtrosMovimientos) filtrosMovimientos.classList.remove("hidden");
+        // Mostrar/ocultar botón de cargar movimientos
+        const uploadMovementsBtn = document.getElementById("uploadMovementsButton");
+        if (uploadMovementsBtn) {
+          uploadMovementsBtn.style.display = "block";
+        }
+      } else {
+        // Ocultar elementos específicos de movimientos
+        if (tipoMovimientoSubSelector) tipoMovimientoSubSelector.style.display = "none";
+        if (filtrosMovimientos) filtrosMovimientos.classList.add("hidden");
+        const uploadMovementsBtn = document.getElementById("uploadMovementsButton");
+        if (uploadMovementsBtn) {
+          uploadMovementsBtn.style.display = "none";
+        }
+      }
+    },
+  };
+
+  // Exportar para uso global
+  window.DOMManager = DOMManager;
+  window.LegendManager = LegendManager;
+</script>

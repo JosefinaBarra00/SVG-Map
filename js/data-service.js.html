@@ -1,0 +1,362 @@
+<script>
+  /**
+   * Servicio de datos para comunicación con el backend
+   */
+  class DataService {
+    constructor() {
+      this.cache = new Map();
+      this.cacheTimeout = 5 * 60 * 1000; // 5 minutos
+    }
+
+    /**
+     * Obtiene datos de la aplicación
+     */
+    async getApplicationData() {
+      return this.callWithCache("obtenerDatosAplicacion", () => {
+        return new Promise((resolve, reject) => {
+          google.script.run
+            .withSuccessHandler(resolve)
+            .withFailureHandler(reject)
+            .obtenerDatosAplicacion();
+        });
+      });
+    }
+
+    /**
+     * Procesa actualización de datos
+     */
+    async processUpdate() {
+      return new Promise((resolve, reject) => {
+        google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(reject)
+          .procesarActualizacion();
+      });
+    }
+
+    /**
+     * Obtiene lista de archivos Excel
+     */
+    async getExcelFiles() {
+      return new Promise((resolve, reject) => {
+        google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(reject)
+          .obtenerArchivosExcel();
+      });
+    }
+
+    /**
+     * Procesa archivo desde Drive
+     */
+    async processFileFromDrive(fileId, timestamp, useExisting = false) {
+      return new Promise((resolve, reject) => {
+        google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(reject)
+          .procesarArchivoDrive(fileId, timestamp, useExisting);
+      });
+    }
+
+    /**
+     * Procesa archivo subido
+     */
+    async processUploadedFile(base64Data, fileName, mimeType, dataSource) {
+      return new Promise((resolve, reject) => {
+        google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(reject)
+          .procesarArchivoSubido(base64Data, fileName, mimeType, dataSource);
+      });
+    }
+
+    /**
+     * Cancela procesamiento en curso
+     */
+    async cancelProcessing() {
+      return new Promise((resolve, reject) => {
+        google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(reject)
+          .cancelarProcesamiento();
+      });
+    }
+
+    /**
+     * Actualiza tipo de mapa
+     */
+    async updateMapType(mapType) {
+      return new Promise((resolve, reject) => {
+        google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(reject)
+          .actualizarTipoMapa(mapType);
+      });
+    }
+
+    /**
+     * Actualiza fuente de datos
+     */
+    async updateDataSource(dataSource) {
+      return new Promise((resolve, reject) => {
+        google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(reject)
+          .actualizarFuenteDatos(dataSource);
+      });
+    }
+
+    /**
+     * Busca SKUs para autocompletado
+     */
+    async searchSKUs(query) {
+      if (query.length < AppConfig.filters.minSearchLength) {
+        return [];
+      }
+
+      return new Promise((resolve, reject) => {
+        google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(reject)
+          .buscarSKUs(query);
+      });
+    }
+
+    /**
+     * Busca ubicaciones para autocompletado
+     */
+    async searchLocations(query) {
+      if (query.length < AppConfig.filters.minSearchLength) {
+        return [];
+      }
+
+      return new Promise((resolve, reject) => {
+        google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(reject)
+          .buscarUbicaciones(query);
+      });
+    }
+
+    /**
+     * Obtiene histórico de ocupación
+     */
+    async getOccupancyHistory(days = 30) {
+      return this.callWithCache(`occupancyHistory_${days}`, () => {
+        return new Promise((resolve, reject) => {
+          google.script.run
+            .withSuccessHandler(resolve)
+            .withFailureHandler(reject)
+            .obtenerHistoricoOcupacion(days);
+        });
+      });
+    }
+
+    /**
+     * Llama función con caché
+     */
+    async callWithCache(key, fn) {
+      // Verificar caché
+      const cached = this.cache.get(key);
+      if (cached && Date.now() - cached.timestamp < this.cacheTimeout) {
+        return cached.data;
+      }
+
+      // Llamar función y cachear resultado
+      try {
+        const data = await fn();
+        this.cache.set(key, {
+          data,
+          timestamp: Date.now(),
+        });
+        return data;
+      } catch (error) {
+        // Si hay error, devolver caché aunque esté expirado
+        if (cached) {
+          console.warn("Usando caché expirado debido a error:", error);
+          return cached.data;
+        }
+        throw error;
+      }
+    }
+
+    /**
+     * Limpia caché
+     */
+    clearCache() {
+      this.cache.clear();
+    }
+
+    /**
+     * Limpia entrada específica del caché
+     */
+    clearCacheEntry(key) {
+      this.cache.delete(key);
+    }
+
+    /**
+     * Carga datos de ubicaciones (función principal de datos)
+     */
+    async loadLocationData() {
+      if (window.colorApplicationInProgress) {
+        console.log(
+          "Ya hay una carga de datos en progreso, saltando solicitud"
+        );
+        return;
+      }
+
+      // Si ya hay datos cargados desde la inicialización, usarlos
+      if (window.datosUbicaciones) {
+        console.log(
+          "Usando datos de ubicaciones ya cargados en la inicialización"
+        );
+        const tipoMapa =
+          document.getElementById("tipoMapaSelector")?.value || "ocupacion";
+        await this.applyColorsAndInitialize(tipoMapa, window.datosUbicaciones);
+        return;
+      }
+
+      window.colorApplicationInProgress = true;
+
+      // Mostrar indicador de carga
+      const tipoMapa =
+        document.getElementById("tipoMapaSelector")?.value || "ocupacion";
+      const loadingIndicator = document.querySelector(".svg-loading");
+      if (loadingIndicator) loadingIndicator.style.display = "flex";
+
+      try {
+        console.log("Solicitando datos de ubicaciones al servidor...");
+
+        const datos = await new Promise((resolve, reject) => {
+          google.script.run
+            .withSuccessHandler(resolve)
+            .withFailureHandler(reject)
+            .obtenerDatosUbicacionesParaUI();
+        });
+
+        if (datos && typeof datos === "object") {
+          window.datosUbicaciones = datos;
+          console.log("Datos de ubicaciones recibidos correctamente");
+          console.log("Estructura de datos:", {
+            tieneOcupacion: !!datos.ocupacion,
+            tieneVencimiento: !!datos.vencimiento,
+            tieneMovimientos: !!datos.movimientos,
+            cantidadOcupacion: datos.ocupacion
+              ? Object.keys(datos.ocupacion).length
+              : 0,
+            cantidadVencimiento: datos.vencimiento
+              ? Object.keys(datos.vencimiento).length
+              : 0,
+            cantidadMovimientos: datos.movimientos
+              ? Object.keys(datos.movimientos).length
+              : 0,
+            primerElemento: datos.ocupacion
+              ? Object.keys(datos.ocupacion)[0]
+              : null,
+          });
+
+          // Aplicar colores al SVG
+          await this.applyColorsAndInitialize(tipoMapa, datos);
+        } else {
+          console.error("Formato incorrecto de datos de ubicaciones");
+          window.colorApplicationInProgress = false;
+        }
+      } catch (error) {
+        console.error("Error al cargar datos de ubicaciones:", error);
+        if (loadingIndicator) loadingIndicator.style.display = "none";
+        window.colorApplicationInProgress = false;
+      }
+    }
+
+    /**
+     * Obtiene datos de vencimientos
+     */
+    async getExpiryData() {
+      return new Promise((resolve, reject) => {
+        google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(reject)
+          .obtenerDatosVencimientos();
+      });
+    }
+
+    /**
+     * Obtiene SVG base
+     */
+    async getBaseSVG() {
+      return new Promise((resolve, reject) => {
+        google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(reject)
+          .obtenerSVGBaseParaUI();
+      });
+    }
+
+    /**
+     * Aplica colores e inicializa componentes de forma secuencial
+     */
+    async applyColorsAndInitialize(tipoMapa, datos) {
+      try {
+        // 1. Aplicar colores al SVG
+        if (window.SVGManager) {
+          await new Promise((resolve) => {
+            window.SVGManager.applyColorsToSVG(tipoMapa, datos);
+            setTimeout(resolve, 300);
+          });
+        }
+
+        // 2. Cargar áreas disponibles
+        if (window.AreaManager) {
+          await new Promise((resolve) => {
+            window.AreaManager.loadAvailableAreas();
+            setTimeout(resolve, 300);
+          });
+        }
+
+        // 3. NO aplicar filtro inicial - dejar todas las áreas visibles
+        console.log("Saltando filtro inicial de áreas para mostrar todo");
+
+        // 4. Finalizar proceso de carga
+        window.colorApplicationInProgress = false;
+
+        // 5. Ajustar viewBox
+        if (window.SVGManager) {
+          await new Promise((resolve) => {
+            console.log("Ajustando viewBox después de aplicar colores...");
+            window.SVGManager.adjustViewBox();
+            setTimeout(resolve, 100);
+          });
+        }
+
+        // 6. Actualizar dashboard cards
+        if (window.actualizarDashboardCards) {
+          window.actualizarDashboardCards();
+        }
+
+        // 7. Cargar calendario
+        if (window.cargarCalendario) {
+          await new Promise((resolve) => {
+            window.cargarCalendario();
+            setTimeout(resolve, 200);
+          });
+        }
+
+        console.log("Secuencia de carga completada | Actualizando Cards");
+      } catch (error) {
+        console.error("Error en la secuencia de inicialización:", error);
+        window.colorApplicationInProgress = false;
+      }
+    }
+
+    /**
+     * Inicializa el servicio de datos
+     */
+    init() {
+      console.log("DataService inicializado");
+    }
+  }
+
+  // Instancia global del servicio
+  window.DataService = new DataService();
+  window.dataService = window.DataService; // Backward compatibility
+</script>

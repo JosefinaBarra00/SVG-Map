@@ -1,0 +1,545 @@
+<script>
+  /**
+   * Gestor de filtros de la aplicación
+   */
+  class FilterManager {
+    constructor() {
+      this.filters = {
+        sku: "",
+        areas: [],
+        ubicacion: "",
+        fechaDesde: null,
+        fechaHasta: null,
+      };
+
+      this.callbacks = {
+        onFilterChange: null,
+        onFilterClear: null,
+      };
+
+      this.init();
+    }
+
+    init() {
+      this.setupEventListeners();
+      this.loadSavedFilters();
+      this.setupFilterCallbacks();
+    }
+
+    setupEventListeners() {
+      // Filtro SKU
+      const skuInput = document.getElementById("filtro-sku");
+      if (skuInput) {
+        skuInput.addEventListener("input", (e) => {
+          this.updateFilter("sku", e.target.value);
+          this.applyFilters();
+        });
+      }
+
+      // Filtro ubicación
+      const ubicacionInput = document.getElementById("filtro-ubicacion");
+      if (ubicacionInput) {
+        ubicacionInput.addEventListener("input", (e) => {
+          this.updateFilter("ubicacion", e.target.value);
+          this.applyFilters();
+        });
+      }
+
+      // Botones de acción
+      const btnFiltrar = document.getElementById("btn-filtrar");
+      if (btnFiltrar) {
+        btnFiltrar.addEventListener("click", () => this.applyFilters());
+      }
+
+      const btnLimpiar = document.getElementById("btn-limpiar");
+      if (btnLimpiar) {
+        btnLimpiar.addEventListener("click", () => this.clearFilters());
+      }
+    }
+
+    updateFilter(key, value) {
+      this.filters[key] = value;
+      this.saveFilters();
+    }
+
+    updateAreaFilter(areas) {
+      this.filters.areas = areas;
+      this.saveFilters();
+      this.applyFilters();
+    }
+
+    applyFilters() {
+      console.log("Aplicando filtros:", this.filters);
+
+      if (!window.mapaSKU) {
+        console.log("No hay mapaSKU disponible para filtrar");
+        return;
+      }
+
+      const ubicacionesFiltradas = this.getFilteredLocations();
+      console.log(
+        `Filtros aplicados: ${ubicacionesFiltradas.length} ubicaciones encontradas`
+      );
+
+      // Mostrar mensaje si no hay resultados
+      this.showFilterResults(ubicacionesFiltradas);
+
+      // Aplicar filtro visual al SVG
+      this.applyVisualFilter(ubicacionesFiltradas);
+
+      // Notificar cambios si hay callbacks
+      if (this.callbacks.onFilterChange) {
+        this.callbacks.onFilterChange(this.getActiveFilters());
+      }
+    }
+
+    clearFilters() {
+      // Resetear valores
+      this.filters = {
+        sku: "",
+        areas: [],
+        ubicacion: "",
+        fechaDesde: null,
+        fechaHasta: null,
+      };
+
+      // Limpiar UI
+      const inputs = [
+        "filtro-sku",
+        "filtro-ubicacion",
+        "fecha-desde",
+        "fecha-hasta",
+      ];
+      inputs.forEach((id) => {
+        const element = document.getElementById(id);
+        if (element) element.value = "";
+      });
+
+      // Limpiar checkboxes de áreas
+      document.querySelectorAll(".area-checkbox input").forEach((checkbox) => {
+        checkbox.checked = false;
+      });
+
+      this.saveFilters();
+
+      // Ocultar mensajes de resultados
+      const resultadoDiv = document.getElementById("resultado-filtro");
+      if (resultadoDiv) {
+        resultadoDiv.classList.add("hidden");
+      }
+
+      // Limpiar filtro visual
+      this.clearVisualFilter();
+
+      if (this.callbacks.onFilterClear) {
+        this.callbacks.onFilterClear();
+      }
+    }
+
+    getActiveFilters() {
+      const active = {};
+
+      Object.entries(this.filters).forEach(([key, value]) => {
+        if (value && (Array.isArray(value) ? value.length > 0 : true)) {
+          active[key] = value;
+        }
+      });
+
+      return active;
+    }
+
+    hasActiveFilters() {
+      const active = this.getActiveFilters();
+      return Object.keys(active).length > 0;
+    }
+
+    saveFilters() {
+      try {
+        localStorage.setItem("warehouseFilters", JSON.stringify(this.filters));
+      } catch (e) {
+        console.error("Error al guardar filtros:", e);
+      }
+    }
+
+    loadSavedFilters() {
+      try {
+        const saved = localStorage.getItem("warehouseFilters");
+        if (saved) {
+          this.filters = { ...this.filters, ...JSON.parse(saved) };
+          this.restoreFilterUI();
+        }
+      } catch (e) {
+        console.error("Error al cargar filtros guardados:", e);
+      }
+    }
+
+    restoreFilterUI() {
+      // Restaurar valores en inputs
+      if (this.filters.sku) {
+        const skuInput = document.getElementById("filtro-sku");
+        if (skuInput) skuInput.value = this.filters.sku;
+      }
+
+      if (this.filters.ubicacion) {
+        const ubicacionInput = document.getElementById("filtro-ubicacion");
+        if (ubicacionInput) ubicacionInput.value = this.filters.ubicacion;
+      }
+
+      // Restaurar áreas seleccionadas
+      if (this.filters.areas.length > 0) {
+        this.filters.areas.forEach((area) => {
+          const checkbox = document.querySelector(`input[value="${area}"]`);
+          if (checkbox) checkbox.checked = true;
+        });
+      }
+    }
+
+    // Métodos de callback
+    onFilterChange(callback) {
+      this.callbacks.onFilterChange = callback;
+    }
+
+    onFilterClear(callback) {
+      this.callbacks.onFilterClear = callback;
+    }
+
+    // Obtener resumen de filtros activos
+    getFilterSummary() {
+      const active = this.getActiveFilters();
+      const parts = [];
+
+      if (active.sku) {
+        parts.push(`SKU: ${active.sku}`);
+      }
+
+      if (active.areas && active.areas.length > 0) {
+        parts.push(`Áreas: ${active.areas.join(", ")}`);
+      }
+
+      if (active.ubicacion) {
+        parts.push(`Ubicación: ${active.ubicacion}`);
+      }
+
+      return parts.length > 0 ? parts.join(" | ") : "Sin filtros activos";
+    }
+
+    // Nuevos métodos para filtrado usando mapaSKU y datosUbicaciones
+    getFilteredLocations() {
+      const skuFilter = this.filters.sku.toLowerCase().trim();
+      const ubicacionFilter = this.filters.ubicacion.toLowerCase().trim();
+
+      console.log("Aplicando filtros:", { skuFilter, ubicacionFilter });
+
+      let ubicacionesFromSKU = new Set();
+      let ubicacionesFromLocation = new Set();
+
+      // 1. Filtro por SKU usando mapaSKU
+      if (skuFilter && window.mapaSKU) {
+        console.log(
+          "mapaSKU estructura:",
+          Object.keys(window.mapaSKU).slice(0, 5)
+        ); // Mostrar primeros 5 SKUs
+        Object.entries(window.mapaSKU).forEach(([sku, ubicaciones]) => {
+          if (sku.toLowerCase().includes(skuFilter)) {
+            console.log(`SKU encontrado: ${sku} en ubicaciones:`, ubicaciones);
+            console.log(
+              `Tipo de ubicaciones:`,
+              typeof ubicaciones,
+              Array.isArray(ubicaciones)
+            );
+            console.log(
+              `Estructura completa del objeto:`,
+              JSON.stringify(ubicaciones, null, 2)
+            );
+
+            if (Array.isArray(ubicaciones)) {
+              ubicaciones.forEach((item, index) => {
+                console.log(`  Procesando item ${index}:`, item, typeof item);
+
+                if (typeof item === "string") {
+                  // Si es string directo
+                  ubicacionesFromSKU.add(item);
+                  console.log(`  Agregada ubicación string: ${item}`);
+                } else if (item && typeof item === "object" && item.ubicacion) {
+                  // Si es objeto con propiedad ubicacion
+                  ubicacionesFromSKU.add(item.ubicacion);
+                  console.log(
+                    `  Agregada ubicación desde objeto: ${item.ubicacion}`
+                  );
+                }
+              });
+            } else if (typeof ubicaciones === "string") {
+              // En caso de que sea una sola ubicación como string
+              ubicacionesFromSKU.add(ubicaciones);
+              console.log(`  Agregada ubicación única: ${ubicaciones}`);
+            } else if (
+              ubicaciones &&
+              typeof ubicaciones === "object" &&
+              ubicaciones.ubicacion
+            ) {
+              // Si es un objeto único con ubicacion
+              ubicacionesFromSKU.add(ubicaciones.ubicacion);
+              console.log(
+                `  Agregada ubicación desde objeto único: ${ubicaciones.ubicacion}`
+              );
+            } else if (
+              ubicaciones &&
+              typeof ubicaciones === "object" &&
+              ubicaciones.ubicaciones &&
+              Array.isArray(ubicaciones.ubicaciones)
+            ) {
+              // Si es un objeto con propiedad 'ubicaciones' que es un array
+              ubicaciones.ubicaciones.forEach((item) => {
+                if (item && typeof item === "object" && item.ubicacion) {
+                  ubicacionesFromSKU.add(item.ubicacion);
+                  console.log(`  Agregada ubicación desde array: ${item.ubicacion}`);
+                }
+              });
+            } else {
+              console.log(
+                `  Formato de ubicaciones no reconocido:`,
+                ubicaciones
+              );
+            }
+            console.log(
+              `  Total ubicaciones en Set: ${ubicacionesFromSKU.size}`
+            );
+          }
+        });
+        console.log(
+          `Ubicaciones encontradas por SKU (${skuFilter}):`,
+          Array.from(ubicacionesFromSKU)
+        );
+      }
+
+      // 2. Filtro por ubicación usando datosUbicaciones
+      if (ubicacionFilter && window.datosUbicaciones) {
+        const allLocationData = {
+          ...window.datosUbicaciones.ocupacion,
+          ...window.datosUbicaciones.vencimiento,
+        };
+
+        Object.keys(allLocationData).forEach((ubicacion) => {
+          // Filtro flexible: si el filtro es "S11-01", debe coincidir con ubicaciones como "S11-01-01", "S11-01-02", etc.
+          const ubicacionLower = ubicacion.toLowerCase();
+
+          if (ubicacionLower.includes(ubicacionFilter)) {
+            ubicacionesFromLocation.add(ubicacion);
+          } else {
+            // También verificar si el filtro coincide con el patrón de área-pasillo
+            // Por ejemplo: filtro "S11-01" debe coincidir con "S11-01-XX"
+            const partesFiltro = ubicacionFilter.split("-");
+            const partesUbicacion = ubicacionLower.split("-");
+
+            if (partesFiltro.length >= 2 && partesUbicacion.length >= 2) {
+              // Verificar si las primeras partes coinciden (área-pasillo)
+              const filtroAreaPasillo = partesFiltro.slice(0, 2).join("-");
+              const ubicacionAreaPasillo = partesUbicacion
+                .slice(0, 2)
+                .join("-");
+
+              if (ubicacionAreaPasillo === filtroAreaPasillo) {
+                ubicacionesFromLocation.add(ubicacion);
+              }
+            }
+          }
+        });
+        console.log(
+          `Ubicaciones encontradas por ubicación (${ubicacionFilter}):`,
+          Array.from(ubicacionesFromLocation)
+        );
+      }
+
+      // 3. Lógica de cruce
+      let resultadoFinal = [];
+
+      if (skuFilter && ubicacionFilter) {
+        // Ambos filtros: intersección (ubicaciones que están en ambos conjuntos)
+        resultadoFinal = Array.from(ubicacionesFromSKU).filter((ub) =>
+          ubicacionesFromLocation.has(ub)
+        );
+        console.log("Cruce de filtros (SKU Y ubicación):", resultadoFinal);
+      } else if (skuFilter) {
+        // Solo filtro SKU
+        resultadoFinal = Array.from(ubicacionesFromSKU);
+        console.log("Solo filtro SKU:", resultadoFinal);
+      } else if (ubicacionFilter) {
+        // Solo filtro ubicación
+        resultadoFinal = Array.from(ubicacionesFromLocation);
+        console.log("Solo filtro ubicación:", resultadoFinal);
+      } else {
+        // Sin filtros: mostrar todas las ubicaciones disponibles
+        if (window.datosUbicaciones && window.datosUbicaciones.ocupacion) {
+          resultadoFinal = Object.keys(window.datosUbicaciones.ocupacion);
+        }
+        console.log("Sin filtros - mostrando todas las ubicaciones");
+      }
+
+      return resultadoFinal;
+    }
+
+    applyVisualFilter(ubicacionesFiltradas) {
+      const svgContainer = document.getElementById("svg-container");
+      if (!svgContainer) return;
+
+      const todosLosElementos = svgContainer.querySelectorAll("rect, g");
+      const ubicacionesSet = new Set(ubicacionesFiltradas);
+      const hayFiltros =
+        ubicacionesFiltradas.length > 0 &&
+        (this.filters.sku.trim() || this.filters.ubicacion.trim());
+
+      console.log("Aplicando filtro visual:", {
+        totalElementos: todosLosElementos.length,
+        ubicacionesFiltradas: ubicacionesFiltradas.length,
+        hayFiltros: hayFiltros,
+      });
+
+      todosLosElementos.forEach((elemento) => {
+        const id = elemento.getAttribute("id");
+
+        if (id && (id.includes("-") || id.includes("."))) {
+          if (!hayFiltros) {
+            // Sin filtros: mostrar todo normal
+            elemento.style.opacity = "1";
+            elemento.style.display = "block";
+            elemento.classList.remove("filtered-out", "filtered-highlighted");
+          } else if (ubicacionesSet.has(id)) {
+            // Ubicación filtrada: resaltar
+            elemento.style.opacity = "1";
+            elemento.style.display = "block";
+            elemento.classList.remove("filtered-out");
+            elemento.classList.add("filtered-highlighted");
+
+            // Agregar borde de resaltado
+            const originalStroke = elemento.getAttribute("stroke") || "none";
+            const originalStrokeWidth =
+              elemento.getAttribute("stroke-width") || "1";
+
+            elemento.setAttribute("data-original-stroke", originalStroke);
+            elemento.setAttribute(
+              "data-original-stroke-width",
+              originalStrokeWidth
+            );
+            elemento.setAttribute("stroke", "#FFD700"); // Dorado para resaltar
+            elemento.setAttribute("stroke-width", "3");
+          } else {
+            // Ubicación no filtrada: atenuar
+            elemento.style.opacity = "0.2";
+            elemento.style.display = "block";
+            elemento.classList.add("filtered-out");
+            elemento.classList.remove("filtered-highlighted");
+
+            // Restaurar stroke original si existe
+            const originalStroke = elemento.getAttribute(
+              "data-original-stroke"
+            );
+            const originalStrokeWidth = elemento.getAttribute(
+              "data-original-stroke-width"
+            );
+            if (originalStroke) {
+              elemento.setAttribute(
+                "stroke",
+                originalStroke === "none" ? "none" : originalStroke
+              );
+              elemento.setAttribute("stroke-width", originalStrokeWidth || "1");
+            }
+          }
+        }
+      });
+
+      console.log(
+        `Filtro visual aplicado: ${ubicacionesFiltradas.length} ubicaciones resaltadas`
+      );
+    }
+
+    setupFilterCallbacks() {
+      // Configurar callbacks para integración con otros componentes
+      this.onFilterChange((filters) => {
+        console.log("Filtros cambiados:", filters);
+
+        // Actualizar tabla si existe
+        if (window.TableManager && window.TableManager.filterByLocations) {
+          const ubicacionesFiltradas = this.getFilteredLocations();
+          window.TableManager.filterByLocations(ubicacionesFiltradas);
+        }
+
+        // Actualizar AreaManager si existe
+        if (window.AreaManager && window.AreaManager.applyAreaFilter) {
+          // El AreaManager ya maneja su propio filtrado, solo notificar
+          console.log("Notificando cambio de filtros al AreaManager");
+        }
+      });
+
+      this.onFilterClear(() => {
+        console.log("Filtros limpiados");
+        this.clearVisualFilter();
+
+        // Notificar a otros componentes
+        if (window.TableManager && window.TableManager.clearFilter) {
+          window.TableManager.clearFilter();
+        }
+      });
+    }
+
+    showFilterResults(ubicacionesFiltradas) {
+      const resultadoDiv = document.getElementById("resultado-filtro");
+      const summaryP = document.getElementById("filter-summary");
+
+      if (!resultadoDiv || !summaryP) return;
+
+      const hasActiveFilters = this.filters.sku.trim() || this.filters.ubicacion.trim();
+      
+      if (hasActiveFilters && ubicacionesFiltradas.length === 0) {
+        // No hay resultados con filtros activos
+        summaryP.innerHTML = "❌ No se encontraron resultados";
+        resultadoDiv.classList.remove("hidden");
+      } else if (hasActiveFilters && ubicacionesFiltradas.length > 0) {
+        // Hay resultados
+        summaryP.innerHTML = `✅ Encontrados: ${ubicacionesFiltradas.length} ubicaciones`;
+        resultadoDiv.classList.remove("hidden");
+      } else {
+        // Sin filtros activos
+        resultadoDiv.classList.add("hidden");
+      }
+    }
+
+    clearVisualFilter() {
+      const svgContainer = document.getElementById("svg-container");
+      if (!svgContainer) return;
+
+      const todosLosElementos = svgContainer.querySelectorAll("rect, g");
+      todosLosElementos.forEach((elemento) => {
+        const id = elemento.getAttribute("id");
+        if (id && (id.includes("-") || id.includes("."))) {
+          // Restaurar opacity y display
+          elemento.style.opacity = "1";
+          elemento.style.display = "block";
+
+          // Remover clases de filtro
+          elemento.classList.remove("filtered-out", "filtered-highlighted");
+
+          // Restaurar stroke original si existe
+          const originalStroke = elemento.getAttribute("data-original-stroke");
+          const originalStrokeWidth = elemento.getAttribute(
+            "data-original-stroke-width"
+          );
+
+          if (originalStroke) {
+            elemento.setAttribute(
+              "stroke",
+              originalStroke === "none" ? "none" : originalStroke
+            );
+            elemento.setAttribute("stroke-width", originalStrokeWidth || "1");
+            elemento.removeAttribute("data-original-stroke");
+            elemento.removeAttribute("data-original-stroke-width");
+          }
+        }
+      });
+
+      console.log("Filtro visual limpiado - mostrando todos los elementos");
+    }
+  }
+
+  // Exportar para uso global
+  window.FilterManager = FilterManager;
+</script>

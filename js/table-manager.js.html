@@ -1,0 +1,615 @@
+<script>
+  /**
+   * Table Manager - Manejo de tablas y ordenamiento
+   */
+  const TableManager = {
+    currentSort: { campo: "dias", direccion: "asc" },
+    currentData: [],
+    originalExpiryData: null, // Para almacenar datos originales para el modal
+
+    /**
+     * Inicializa el gestor de tablas
+     */
+    init() {
+      this.initializeExpiryTable();
+      this.setupTableSorting();
+    },
+
+    /**
+     * Inicializa la tabla de vencimientos
+     */
+    initializeExpiryTable() {
+      setTimeout(() => {
+        this.showTopExpiries();
+      }, 3000);
+    },
+
+    /**
+     * Muestra los principales vencimientos
+     */
+    showTopExpiries() {
+      console.log("Cargando datos de vencimientos para tabla...");
+
+      // Intentar obtener datos del servidor usando DataService
+      if (window.DataService) {
+        window.DataService.getExpiryData()
+          .then((result) => {
+            console.log("Datos de vencimientos recibidos:", result);
+            const tabla = document.getElementById("tabla-vencimientos");
+            if (
+              result &&
+              typeof result === "object" &&
+              Object.keys(result).length > 0
+            ) {
+              this.processAndShowExpiries({ data: result }, tabla);
+            } else {
+              this.showNoDataMessage(tabla);
+            }
+          })
+          .catch((error) => {
+            console.error("Error al obtener vencimientos:", error);
+            const tabla = document.getElementById("tabla-vencimientos");
+            this.showNoDataMessage(tabla);
+          });
+      } else {
+        // Fallback: llamada directa a Google Apps Script
+        google.script.run
+          .withSuccessHandler((result) => {
+            console.log("Datos de vencimientos recibidos:", result);
+            const tabla = document.getElementById("tabla-vencimientos");
+            if (
+              result &&
+              typeof result === "object" &&
+              Object.keys(result).length > 0
+            ) {
+              this.processAndShowExpiries({ data: result }, tabla);
+            } else {
+              this.showNoDataMessage(tabla);
+            }
+          })
+          .withFailureHandler((error) => {
+            console.error("Error al obtener vencimientos:", error);
+            const tabla = document.getElementById("tabla-vencimientos");
+            this.showNoDataMessage(tabla);
+          })
+          .obtenerDatosVencimientos();
+      }
+    },
+
+    /**
+     * Procesa y muestra vencimientos en la tabla
+     */
+    processAndShowExpiries(result, tabla) {
+      if (!tabla) return;
+
+      try {
+        // Almacenar datos originales para el modal
+        this.originalExpiryData = result.data;
+        
+        const vencimientosArray = this.convertExpiryDataToArray(result.data);
+
+        if (vencimientosArray.length === 0) {
+          this.showNoDataMessage(tabla);
+          return;
+        }
+
+        this.currentData = vencimientosArray;
+        const vencimientosOrdenados = this.sortExpiries(vencimientosArray);
+        this.showExpiriesInTable(vencimientosOrdenados, tabla);
+
+        // Actualizar resumen
+        const resumen = document.getElementById("resumen-vencimientos");
+        if (resumen) {
+          const totalGrupos = vencimientosArray.length;
+          const totalCantidad = vencimientosArray.reduce((sum, v) => sum + v.cantidad, 0);
+          const vencidosHoy = vencimientosArray.filter(
+            (v) => v.dias <= 0
+          ).length;
+          const vencenProximos = vencimientosArray.filter(
+            (v) => v.dias > 0 && v.dias <= 30
+          ).length;
+
+          resumen.innerHTML = `
+          Top 20%: ${totalGrupos} grupos (${totalCantidad.toLocaleString()} productos) | 
+          Vencidos: ${vencidosHoy} | 
+          Vencen en 30 días: ${vencenProximos}
+        `;
+        }
+      } catch (error) {
+        console.error("Error al procesar vencimientos:", error);
+        this.showNoDataMessage(tabla);
+      }
+    },
+
+    /**
+     * Muestra mensaje cuando no hay datos
+     */
+    showNoDataMessage(tabla) {
+      if (!tabla) return;
+
+      const tbody = tabla.querySelector("tbody");
+      if (tbody) {
+        tbody.innerHTML = `
+        <tr>
+          <td colspan="5" class="text-center">
+            <div class="no-data-message">
+              <p>📦 No hay datos de vencimientos disponibles</p>
+              <p style="font-size: 0.9em; color: #666;">
+                Suba un archivo Excel para ver la información de vencimientos
+              </p>
+            </div>
+          </td>
+        </tr>
+      `;
+      }
+
+      const resumen = document.getElementById("resumen-vencimientos");
+      if (resumen) {
+        resumen.textContent = "Total: 0 productos";
+      }
+    },
+
+    /**
+     * Convierte datos de vencimientos a array
+     */
+    convertExpiryDataToArray(datosVencimientos) {
+      console.log(
+        "Convirtiendo datos de vencimientos a array:",
+        datosVencimientos
+      );
+
+      if (!datosVencimientos || typeof datosVencimientos !== "object") {
+        console.log("Datos de vencimientos inválidos o vacíos");
+        return [];
+      }
+
+      const gruposPorFechaYSku = new Map();
+      const hoy = new Date();
+
+      // Formato esperado: {"2025/06/06": { detalle: [...], resumen: {...} }}
+      Object.entries(datosVencimientos).forEach(
+        ([fechaVencimiento, datosFecha]) => {
+          if (datosFecha && typeof datosFecha === "object") {
+            // Calcular días hasta vencimiento
+            const fechaVenc = new Date(fechaVencimiento);
+            const diasHastaCaducidad = Math.ceil(
+              (fechaVenc - hoy) / (1000 * 60 * 60 * 24)
+            );
+
+            // Procesar el array 'detalle' si existe
+            if (datosFecha.detalle && Array.isArray(datosFecha.detalle)) {
+              datosFecha.detalle.forEach((producto) => {
+                const sku = producto.sku || "N/A";
+                const clave = `${fechaVencimiento}_${sku}`;
+                
+                if (!gruposPorFechaYSku.has(clave)) {
+                  gruposPorFechaYSku.set(clave, {
+                    ubicaciones: new Set(),
+                    sku: sku,
+                    descripcion: producto.descripcion || "Sin descripción",
+                    dias: diasHastaCaducidad,
+                    cantidad: 0,
+                    fechaVencimiento: fechaVencimiento,
+                    lotes: new Set()
+                  });
+                }
+                
+                const grupo = gruposPorFechaYSku.get(clave);
+                grupo.ubicaciones.add(producto.ubicacion || "N/A");
+                grupo.cantidad += 1; // Cada item en detalle cuenta como 1
+                if (producto.lpn) grupo.lotes.add(producto.lpn);
+              });
+            }
+
+            // Procesar el 'resumen' para obtener cantidades agregadas
+            if (datosFecha.resumen && typeof datosFecha.resumen === "object") {
+              Object.entries(datosFecha.resumen).forEach(
+                ([sku, datosResumen]) => {
+                  const clave = `${fechaVencimiento}_${sku}`;
+                  
+                  if (!gruposPorFechaYSku.has(clave)) {
+                    gruposPorFechaYSku.set(clave, {
+                      ubicaciones: new Set(["MÚLTIPLES"]),
+                      sku: sku,
+                      descripcion: datosResumen.descripcion || "Sin descripción",
+                      dias: diasHastaCaducidad,
+                      cantidad: datosResumen.cantidad || 0,
+                      fechaVencimiento: fechaVencimiento,
+                      lotes: new Set()
+                    });
+                  } else {
+                    // Si ya existe, sumar la cantidad del resumen
+                    const grupo = gruposPorFechaYSku.get(clave);
+                    grupo.cantidad += (datosResumen.cantidad || 0);
+                  }
+                }
+              );
+            }
+          }
+        }
+      );
+
+      // Convertir Map a Array y preparar para mostrar
+      const vencimientosArray = Array.from(gruposPorFechaYSku.values()).map(grupo => ({
+        ubicacion: Array.from(grupo.ubicaciones).join(", "),
+        sku: grupo.sku,
+        descripcion: grupo.descripcion,
+        dias: grupo.dias,
+        cantidad: grupo.cantidad,
+        fechaVencimiento: grupo.fechaVencimiento,
+        lote: Array.from(grupo.lotes).join(", ") || ""
+      }));
+
+      // Ordenar por cantidad descendente para obtener los mayores
+      vencimientosArray.sort((a, b) => b.cantidad - a.cantidad);
+
+      // Tomar solo el top 20%
+      const top20PercentCount = Math.ceil(vencimientosArray.length * 0.2);
+      const top20Percent = vencimientosArray.slice(0, top20PercentCount);
+
+      console.log(`Convertidos ${vencimientosArray.length} grupos, mostrando top 20%: ${top20Percent.length} grupos`);
+      return top20Percent;
+    },
+
+    /**
+     * Ordena vencimientos
+     */
+    sortExpiries(vencimientosArray) {
+      return [...vencimientosArray].sort((a, b) => {
+        let valorA = a[this.currentSort.campo];
+        let valorB = b[this.currentSort.campo];
+
+        if (
+          this.currentSort.campo === "dias" ||
+          this.currentSort.campo === "cantidad"
+        ) {
+          valorA = Number(valorA) || 0;
+          valorB = Number(valorB) || 0;
+        } else {
+          valorA = String(valorA).toLowerCase();
+          valorB = String(valorB).toLowerCase();
+        }
+
+        const resultado = valorA < valorB ? -1 : valorA > valorB ? 1 : 0;
+        return this.currentSort.direccion === "asc" ? resultado : -resultado;
+      });
+    },
+
+    /**
+     * Muestra vencimientos en la tabla
+     */
+    showExpiriesInTable(vencimientos, tabla) {
+      if (!tabla) return;
+
+      const tbody = tabla.querySelector("tbody");
+      if (!tbody) return;
+
+      // Mostrar solo los primeros 50 para rendimiento
+      const vencimientosLimitados = vencimientos.slice(0, 50);
+
+      tbody.innerHTML = vencimientosLimitados
+        .map((vencimiento, index) => {
+          const colorClass = this.getExpiryRowClass(vencimiento.dias);
+          const diasTexto =
+            vencimiento.dias < 0
+              ? `Vencido hace ${Math.abs(vencimiento.dias)} días`
+              : `${vencimiento.dias} días`;
+
+          return `
+        <tr class="fila-vencimiento ${colorClass}" data-sku="${vencimiento.sku}" data-fecha="${vencimiento.fechaVencimiento}">
+          <td class="sku-celda">${vencimiento.sku}</td>
+          <td class="descripcion-celda" title="${vencimiento.descripcion}">
+            ${this.truncateText(vencimiento.descripcion, 40)}
+          </td>
+          <td class="dias-celda ${colorClass}">${diasTexto}</td>
+          <td class="cantidad-celda">${Utils.formatNumber(
+            vencimiento.cantidad
+          )}</td>
+          <td class="detalle-celda">
+            <button class="btn-detalle" onclick="TableManager.showProductDetail('${vencimiento.sku}', '${vencimiento.fechaVencimiento}')" title="Ver detalle de productos">
+              🔍
+            </button>
+          </td>
+        </tr>
+      `;
+        })
+        .join("");
+
+      // Configurar clics en filas
+      this.setupTableRowClicks(tbody);
+    },
+
+    /**
+     * Obtiene clase CSS para fila de vencimiento
+     */
+    getExpiryRowClass(dias) {
+      if (dias < 0) return "vencido";
+      if (dias <= 7) return "critico";
+      if (dias <= 30) return "bajo";
+      if (dias <= 90) return "medio";
+      return "alto";
+    },
+
+    /**
+     * Trunca texto para mostrar en tabla
+     */
+    truncateText(text, maxLength) {
+      if (!text || text.length <= maxLength) return text;
+      return text.substring(0, maxLength) + "...";
+    },
+
+    /**
+     * Configura clics en filas de tabla
+     */
+    setupTableRowClicks(tbody) {
+      tbody.querySelectorAll(".fila-vencimiento").forEach((fila) => {
+        fila.addEventListener("click", (e) => {
+          const ubicacion = fila.getAttribute("data-ubicacion");
+          if (ubicacion) {
+            this.highlightLocationInMap(ubicacion);
+          }
+        });
+      });
+    },
+
+    /**
+     * Resalta ubicación en el mapa
+     */
+    highlightLocationInMap(ubicacion) {
+      // Limpiar resaltados anteriores
+      document.querySelectorAll("rect.ubicacion").forEach((rect) => {
+        rect.classList.remove("highlighted");
+      });
+
+      // Resaltar la ubicación específica
+      const elemento = document.getElementById(ubicacion);
+      if (elemento) {
+        elemento.classList.add("highlighted");
+
+        // Scroll hacia el elemento si es necesario
+        elemento.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
+
+        // Quitar resaltado después de 3 segundos
+        setTimeout(() => {
+          elemento.classList.remove("highlighted");
+        }, 3000);
+      }
+    },
+
+    /**
+     * Configura ordenamiento de tabla
+     */
+    setupTableSorting() {
+      document.querySelectorAll(".btn-ordenar").forEach((boton) => {
+        boton.addEventListener("click", (e) => {
+          const campo = boton.getAttribute("data-campo");
+          this.handleSortClick(campo);
+        });
+
+        boton.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            const campo = boton.getAttribute("data-campo");
+            this.handleSortClick(campo);
+          }
+        });
+      });
+    },
+
+    /**
+     * Maneja clic de ordenamiento
+     */
+    handleSortClick(campo) {
+      if (this.currentSort.campo === campo) {
+        this.currentSort.direccion =
+          this.currentSort.direccion === "asc" ? "desc" : "asc";
+      } else {
+        this.currentSort.campo = campo;
+        this.currentSort.direccion = "asc";
+      }
+
+      this.sortAndShowExistingExpiries();
+      this.updateSortButtons();
+    },
+
+    /**
+     * Ordena y muestra vencimientos existentes
+     */
+    sortAndShowExistingExpiries() {
+      if (this.currentData.length > 0) {
+        const tabla = document.getElementById("tabla-vencimientos");
+        const vencimientosOrdenados = this.sortExpiries(this.currentData);
+        this.showExpiriesInTable(vencimientosOrdenados, tabla);
+      }
+    },
+
+    /**
+     * Actualiza botones de ordenamiento
+     */
+    updateSortButtons() {
+      document.querySelectorAll(".btn-ordenar").forEach((boton) => {
+        const campo = boton.getAttribute("data-campo");
+        boton.classList.remove("asc", "desc");
+
+        if (campo === this.currentSort.campo) {
+          boton.classList.add(this.currentSort.direccion);
+        }
+      });
+    },
+
+    /**
+     * Filtra tabla por ubicaciones
+     */
+    filterByLocations(ubicaciones) {
+      if (!this.currentData.length) return;
+
+      const ubicacionesSet = new Set(ubicaciones);
+      const vencimientosFiltrados = this.currentData.filter((v) =>
+        ubicacionesSet.has(v.ubicacion)
+      );
+
+      const tabla = document.getElementById("tabla-vencimientos");
+      if (vencimientosFiltrados.length > 0) {
+        const vencimientosOrdenados = this.sortExpiries(vencimientosFiltrados);
+        this.showExpiriesInTable(vencimientosOrdenados, tabla);
+
+        // Actualizar resumen
+        const resumen = document.getElementById("resumen-vencimientos");
+        if (resumen) {
+          const totalCantidad = vencimientosFiltrados.reduce((sum, v) => sum + v.cantidad, 0);
+          resumen.textContent = `Filtrado: ${vencimientosFiltrados.length} grupos (${totalCantidad.toLocaleString()} productos)`;
+        }
+      } else {
+        this.showNoDataMessage(tabla);
+      }
+    },
+
+    /**
+     * Muestra detalle de productos para un SKU y fecha específicos
+     */
+    showProductDetail(sku, fechaVencimiento) {
+      console.log(`Mostrando detalle para SKU: ${sku}, Fecha: ${fechaVencimiento}`);
+      
+      // Usar datos almacenados si están disponibles
+      if (this.originalExpiryData) {
+        const detalleProductos = this.extractProductDetails(this.originalExpiryData, sku, fechaVencimiento);
+        this.openProductDetailModal(sku, fechaVencimiento, detalleProductos);
+      } else if (window.DataService) {
+        // Fallback: obtener datos del servidor
+        window.DataService.getExpiryData()
+          .then((result) => {
+            const detalleProductos = this.extractProductDetails(result, sku, fechaVencimiento);
+            this.openProductDetailModal(sku, fechaVencimiento, detalleProductos);
+          })
+          .catch((error) => {
+            console.error("Error al obtener detalle:", error);
+            this.openProductDetailModal(sku, fechaVencimiento, []);
+          });
+      } else {
+        // Último fallback
+        this.openProductDetailModal(sku, fechaVencimiento, []);
+      }
+    },
+
+    /**
+     * Extrae detalles de productos para un SKU y fecha específicos
+     */
+    extractProductDetails(datosVencimientos, targetSku, targetFecha) {
+      const productos = [];
+      
+      if (datosVencimientos && datosVencimientos[targetFecha]) {
+        const datosFecha = datosVencimientos[targetFecha];
+        
+        // Buscar en detalle
+        if (datosFecha.detalle && Array.isArray(datosFecha.detalle)) {
+          datosFecha.detalle.forEach((producto) => {
+            if ((producto.sku || "").toLowerCase() === targetSku.toLowerCase()) {
+              productos.push({
+                ubicacion: producto.ubicacion || "N/A",
+                sku: producto.sku || "N/A",
+                descripcion: producto.descripcion || "Sin descripción",
+                lote: producto.lpn || "Sin lote",
+                cantidad: 1
+              });
+            }
+          });
+        }
+        
+        // Si no hay productos en detalle, usar resumen
+        if (productos.length === 0 && datosFecha.resumen && datosFecha.resumen[targetSku]) {
+          const resumenSku = datosFecha.resumen[targetSku];
+          productos.push({
+            ubicacion: "MÚLTIPLES",
+            sku: targetSku,
+            descripcion: resumenSku.descripcion || "Sin descripción",
+            lote: "MÚLTIPLES",
+            cantidad: resumenSku.cantidad || 0
+          });
+        }
+      }
+      
+      return productos;
+    },
+
+    /**
+     * Abre modal con detalle de productos
+     */
+    openProductDetailModal(sku, fechaVencimiento, productos) {
+      // Usar ModalManager si está disponible
+      if (window.ModalManager && window.ModalManager.show) {
+        const modalContent = this.generateProductDetailHTML(sku, fechaVencimiento, productos);
+        window.ModalManager.show(modalContent, `Detalle: ${sku}`);
+      } else {
+        // Fallback simple
+        this.showSimpleProductDetail(sku, fechaVencimiento, productos);
+      }
+    },
+
+    /**
+     * Genera HTML para el detalle de productos
+     */
+    generateProductDetailHTML(sku, fechaVencimiento, productos) {
+      const totalCantidad = productos.reduce((sum, p) => sum + p.cantidad, 0);
+      const descripcion = productos.length > 0 ? productos[0].descripcion : '';
+      
+      return `
+        <div class="product-detail-modal">
+          <div class="detail-header">
+            <h3>${sku}</h3>
+            ${descripcion ? `<h4 class="product-subtitle">${descripcion}</h4>` : ''}
+            <p><strong>Fecha de Vencimiento:</strong> ${fechaVencimiento}</p>
+            <p><strong>Total Productos:</strong> ${totalCantidad.toLocaleString()}</p>
+          </div>
+          
+          <div class="detail-content">
+            ${productos.length > 0 ? `
+              <table class="detail-table">
+                <thead>
+                  <tr>
+                    <th>Ubicación</th>
+                    <th>Lote</th>
+                    <th>Cantidad</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${productos.map(producto => `
+                    <tr>
+                      <td>${producto.ubicacion}</td>
+                      <td>${producto.lote}</td>
+                      <td>${producto.cantidad.toLocaleString()}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            ` : `
+              <div class="no-detail-data">
+                <p>No se encontraron detalles específicos para este producto.</p>
+              </div>
+            `}
+          </div>
+        </div>
+      `;
+    },
+
+    /**
+     * Muestra detalle simple (fallback)
+     */
+    showSimpleProductDetail(sku, fechaVencimiento, productos) {
+      const totalCantidad = productos.reduce((sum, p) => sum + p.cantidad, 0);
+      alert(`Detalle de ${sku}\nFecha: ${fechaVencimiento}\nTotal: ${totalCantidad} productos\nUbicaciones: ${productos.map(p => p.ubicacion).join(', ')}`);
+    },
+
+    /**
+     * Recarga la tabla
+     */
+    reload() {
+      this.showTopExpiries();
+    },
+  };
+
+  // Exportar para uso global
+  window.TableManager = TableManager;
+</script>
